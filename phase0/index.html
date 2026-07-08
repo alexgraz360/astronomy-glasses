@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Reality Engine - Phase 0 Sensor Check</title>
+<style>
+  :root {
+    --bg: #05070f;
+    --panel: #0d1120;
+    --panel2: #141a2e;
+    --line: #222c47;
+    --text: #e6ebff;
+    --muted: #8a93b2;
+    --accent: #6ea8ff;
+    --good: #4fd08a;
+    --warn: #ffcc5c;
+    --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0;
+    background: radial-gradient(1200px 600px at 50% -10%, #101833 0%, var(--bg) 60%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 20px 16px 60px; }
+  header { text-align: center; margin-bottom: 18px; }
+  h1 { font-size: 19px; margin: 0 0 4px; letter-spacing: 0.3px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0; }
+  .startbtn {
+    display: block; width: 100%; margin: 18px 0;
+    padding: 16px; border: none; border-radius: 14px;
+    background: linear-gradient(180deg, #3a7bff, #2b5fd0);
+    color: #fff; font-size: 17px; font-weight: 600;
+    box-shadow: 0 6px 20px rgba(58,123,255,0.35);
+  }
+  .startbtn:active { transform: translateY(1px); }
+  .startbtn:disabled { opacity: 0.45; box-shadow: none; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px 16px; margin-bottom: 14px;
+  }
+  .card h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px;
+    color: var(--accent); margin: 0 0 12px; font-weight: 700;
+  }
+  .row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .row:last-child { border-bottom: none; }
+  .label { color: var(--muted); font-size: 13px; }
+  .val {
+    font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600;
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  .val.big { font-size: 18px; }
+  .pill {
+    display: inline-block; padding: 3px 9px; border-radius: 999px;
+    font-size: 12px; font-weight: 600;
+  }
+  .pill.good { background: rgba(79,208,138,0.15); color: var(--good); }
+  .pill.warn { background: rgba(255,204,92,0.15); color: var(--warn); }
+  .pill.bad  { background: rgba(255,107,107,0.15); color: var(--bad); }
+  .pill.idle { background: rgba(138,147,178,0.15); color: var(--muted); }
+  .compass-wrap { display: flex; justify-content: center; margin: 6px 0 14px; }
+  .compass {
+    position: relative; width: 150px; height: 150px; border-radius: 50%;
+    border: 2px solid var(--line); background: var(--panel2);
+  }
+  .needle {
+    position: absolute; left: 50%; top: 50%; width: 4px; height: 62px;
+    margin-left: -2px; margin-top: -62px; transform-origin: 50% 100%;
+    background: linear-gradient(180deg, var(--bad) 0%, var(--bad) 50%, #ffffff 50%, #ffffff 100%);
+    border-radius: 2px; transition: transform 0.1s linear;
+  }
+  .compass .cardinal {
+    position: absolute; font-size: 12px; color: var(--muted); font-weight: 700;
+  }
+  .compass .n { top: 6px; left: 50%; transform: translateX(-50%); color: var(--bad); }
+  .compass .s { bottom: 6px; left: 50%; transform: translateX(-50%); }
+  .compass .e { right: 8px; top: 50%; transform: translateY(-50%); }
+  .compass .w { left: 8px; top: 50%; transform: translateY(-50%); }
+  .hint { color: var(--muted); font-size: 12px; line-height: 1.5; margin-top: 10px; }
+  .log {
+    font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 11px;
+    color: var(--muted); white-space: pre-wrap; word-break: break-word;
+    max-height: 130px; overflow-y: auto; line-height: 1.5;
+  }
+  footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Reality Engine &middot; Phase 0</h1>
+    <p class="sub">Sensor pipeline check &mdash; GPS, time, orientation</p>
+  </header>
+
+  <button id="startBtn" class="startbtn">Start Sensors</button>
+
+  <div class="card">
+    <h2>Status</h2>
+    <div class="row"><span class="label">Location</span><span id="st-geo" class="pill idle">idle</span></div>
+    <div class="row"><span class="label">Orientation</span><span id="st-ori" class="pill idle">idle</span></div>
+    <div class="row"><span class="label">Secure context (HTTPS)</span><span id="st-https" class="pill idle">checking</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Location (GPS)</h2>
+    <div class="row"><span class="label">Latitude</span><span id="lat" class="val">&mdash;</span></div>
+    <div class="row"><span class="label">Longitude</span><span id="lon" class="val">&mdash;</span></div>
+    <div class="row"><span class="label">Altitude</span><span id="alt" class="val">&mdash;</span></div>
+    <div class="row"><span class="label">Accuracy</span><span id="acc" class="val">&mdash;</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Time</h2>
+    <div class="row"><span class="label">Local</span><span id="tlocal" class="val">&mdash;</span></div>
+    <div class="row"><span class="label">UTC</span><span id="tutc" class="val">&mdash;</span></div>
+    <div class="row"><span class="label">Julian Date</span><span id="jd" class="val">&mdash;</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Orientation</h2>
+    <div class="compass-wrap">
+      <div class="compass">
+        <div id="needle" class="needle"></div>
+        <span class="cardinal n">N</span>
+        <span class="cardinal e">E</span>
+        <span class="cardinal s">S</span>
+        <span class="cardinal w">W</span>
+      </div>
+    </div>
+    <div class="row"><span class="label">Compass heading</span><span id="heading" class="val big">&mdash;</span></div>
+    <div class="row"><span class="label">Heading accuracy</span><span id="hacc" class="val">&mdash;</span></div>
+    <div class="row"><span class="label">Pitch (up/down)</span><span id="pitch" class="val">&mdash;</span></div>
+    <div class="row"><span class="label">Roll (tilt)</span><span id="roll" class="val">&mdash;</span></div>
+    <p class="hint">Compass heading is where the top of the phone points. 0&deg;=N, 90&deg;=E, 180&deg;=S, 270&deg;=W. If it drifts, wave the phone in a figure-8 to recalibrate.</p>
+  </div>
+
+  <div class="card">
+    <h2>Event Log</h2>
+    <div id="log" class="log">Waiting to start...</div>
+  </div>
+
+  <footer>Phase 0 skeleton &middot; validates sensors before any astronomy math</footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var els = {
+    startBtn: document.getElementById("startBtn"),
+    stGeo: document.getElementById("st-geo"),
+    stOri: document.getElementById("st-ori"),
+    stHttps: document.getElementById("st-https"),
+    lat: document.getElementById("lat"),
+    lon: document.getElementById("lon"),
+    alt: document.getElementById("alt"),
+    acc: document.getElementById("acc"),
+    tlocal: document.getElementById("tlocal"),
+    tutc: document.getElementById("tutc"),
+    jd: document.getElementById("jd"),
+    heading: document.getElementById("heading"),
+    hacc: document.getElementById("hacc"),
+    pitch: document.getElementById("pitch"),
+    roll: document.getElementById("roll"),
+    needle: document.getElementById("needle"),
+    log: document.getElementById("log")
+  };
+
+  var logLines = [];
+  function log(msg) {
+    var t = new Date().toLocaleTimeString();
+    logLines.unshift("[" + t + "] " + msg);
+    if (logLines.length > 40) logLines.pop();
+    els.log.textContent = logLines.join("\n");
+  }
+
+  function setPill(el, cls, text) {
+    el.className = "pill " + cls;
+    el.textContent = text;
+  }
+
+  // --- Secure context check (iOS needs HTTPS for these sensors) ---
+  if (window.isSecureContext) {
+    setPill(els.stHttps, "good", "secure");
+  } else {
+    setPill(els.stHttps, "bad", "NOT secure");
+    log("WARNING: page is not a secure context. iOS will block GPS and orientation. Open this over https://");
+  }
+
+  // --- Time (updates every 250ms) ---
+  function julianDate(d) {
+    return d.getTime() / 86400000 + 2440587.5;
+  }
+  function tick() {
+    var now = new Date();
+    els.tlocal.textContent = now.toLocaleTimeString();
+    els.tutc.textContent = now.toISOString().slice(11, 19) + " UTC";
+    els.jd.textContent = julianDate(now).toFixed(5);
+  }
+  setInterval(tick, 250);
+  tick();
+
+  // --- Geolocation ---
+  function startGeo() {
+    if (!("geolocation" in navigator)) {
+      setPill(els.stGeo, "bad", "unsupported");
+      log("Geolocation API not available.");
+      return;
+    }
+    setPill(els.stGeo, "warn", "requesting");
+    navigator.geolocation.watchPosition(
+      function (pos) {
+        var c = pos.coords;
+        setPill(els.stGeo, "good", "live");
+        els.lat.textContent = c.latitude.toFixed(6) + "°";
+        els.lon.textContent = c.longitude.toFixed(6) + "°";
+        els.alt.textContent = (c.altitude != null) ? c.altitude.toFixed(1) + " m" : "n/a";
+        els.acc.textContent = (c.accuracy != null) ? "±" + c.accuracy.toFixed(0) + " m" : "n/a";
+      },
+      function (err) {
+        setPill(els.stGeo, "bad", "denied/err");
+        log("Geolocation error (" + err.code + "): " + err.message);
+      },
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 }
+    );
+    log("Geolocation watch started.");
+  }
+
+  // --- Orientation ---
+  var haveOri = false;
+  function onOrientation(e) {
+    if (!haveOri) { setPill(els.stOri, "good", "live"); haveOri = true; }
+
+    // iOS gives a true compass heading via webkitCompassHeading (0 = North, clockwise)
+    var heading = null;
+    if (typeof e.webkitCompassHeading === "number" && !isNaN(e.webkitCompassHeading)) {
+      heading = e.webkitCompassHeading;
+      var wca = e.webkitCompassAccuracy;
+      els.hacc.textContent = (wca != null && wca >= 0) ? "±" + wca.toFixed(0) + "°" : "unknown";
+    } else if (e.alpha != null) {
+      // Fallback for non-iOS: derive heading from alpha
+      heading = (360 - e.alpha) % 360;
+      els.hacc.textContent = e.absolute ? "absolute" : "relative (uncalibrated)";
+    }
+
+    if (heading != null) {
+      els.heading.textContent = heading.toFixed(0) + "° " + compassPoint(heading);
+      els.needle.style.transform = "rotate(" + heading + "deg)";
+    }
+    if (e.beta != null) els.pitch.textContent = e.beta.toFixed(0) + "°";
+    if (e.gamma != null) els.roll.textContent = e.gamma.toFixed(0) + "°";
+  }
+
+  function compassPoint(deg) {
+    var pts = ["N","NE","E","SE","S","SW","W","NW"];
+    return pts[Math.round(deg / 45) % 8];
+  }
+
+  function startOrientation() {
+    setPill(els.stOri, "warn", "requesting");
+    // iOS 13+ requires explicit permission requested from a user gesture
+    if (typeof DeviceOrientationEvent !== "undefined" &&
+        typeof DeviceOrientationEvent.requestPermission === "function") {
+      DeviceOrientationEvent.requestPermission()
+        .then(function (state) {
+          if (state === "granted") {
+            window.addEventListener("deviceorientation", onOrientation, true);
+            log("Orientation permission granted.");
+          } else {
+            setPill(els.stOri, "bad", "denied");
+            log("Orientation permission denied: " + state);
+          }
+        })
+        .catch(function (err) {
+          setPill(els.stOri, "bad", "error");
+          log("Orientation permission error: " + err);
+        });
+    } else {
+      // Non-iOS or older: just listen
+      window.addEventListener("deviceorientationabsolute", onOrientation, true);
+      window.addEventListener("deviceorientation", onOrientation, true);
+      log("Orientation listener attached (no permission prompt needed).");
+    }
+  }
+
+  els.startBtn.addEventListener("click", function () {
+    els.startBtn.disabled = true;
+    els.startBtn.textContent = "Sensors running...";
+    log("Start pressed.");
+    startGeo();
+    startOrientation();
+  });
+})();
+</script>
+</body>
+</html>
