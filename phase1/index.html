@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>Reality Engine - Phase 1 Ephemeris + AR Labels</title>
+<style>
+  :root {
+    --bg: #05070f;
+    --panel: rgba(13, 17, 32, 0.82);
+    --line: #222c47;
+    --text: #e6ebff;
+    --muted: #8a93b2;
+    --accent: #6ea8ff;
+    --good: #4fd08a;
+    --warn: #ffcc5c;
+    --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    height: 100%; overflow: hidden;
+    -webkit-user-select: none; user-select: none;
+  }
+
+  /* Camera feed fills the screen; overlay canvas draws labels on top of it. */
+  #cam {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; background: #000; display: none;
+  }
+  #sky {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+  }
+
+  /* Splash (pre-start) */
+  #splash {
+    position: fixed; inset: 0; z-index: 30; display: flex;
+    flex-direction: column; align-items: center; justify-content: center;
+    background: radial-gradient(1200px 600px at 50% -10%, #101833 0%, var(--bg) 60%);
+    text-align: center; padding: 24px;
+  }
+  #splash h1 { font-size: 20px; margin: 0 0 6px; }
+  #splash p { color: var(--muted); font-size: 13px; margin: 0 0 26px; max-width: 340px; line-height: 1.5; }
+  .startbtn {
+    padding: 16px 42px; border: none; border-radius: 14px;
+    background: linear-gradient(180deg, #3a7bff, #2b5fd0);
+    color: #fff; font-size: 17px; font-weight: 600;
+    box-shadow: 0 6px 20px rgba(58,123,255,0.35);
+  }
+  .startbtn:active { transform: translateY(1px); }
+
+  /* Top bar: status pills + panel toggles */
+  #topbar {
+    position: fixed; top: env(safe-area-inset-top, 0); left: 0; right: 0; z-index: 20;
+    display: flex; gap: 6px; align-items: center; padding: 8px 10px;
+    flex-wrap: wrap;
+  }
+  .pill {
+    padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    background: rgba(138,147,178,0.25); color: var(--muted);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  .pill.good { background: rgba(79,208,138,0.25); color: var(--good); }
+  .pill.warn { background: rgba(255,204,92,0.25); color: var(--warn); }
+  .pill.bad  { background: rgba(255,107,107,0.25); color: var(--bad); }
+  .tbtn {
+    margin-left: auto; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); font-size: 12px; font-weight: 600;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  .tbtn + .tbtn { margin-left: 0; }
+  .tbtn.on { border-color: var(--accent); color: var(--accent); }
+
+  /* Data panel: Step A verification table */
+  #dataPanel {
+    position: fixed; top: calc(env(safe-area-inset-top, 0px) + 46px); left: 10px; right: 10px;
+    z-index: 15; background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 10px 12px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    max-height: 60vh; overflow-y: auto;
+  }
+  #dataPanel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.1px; color: var(--accent); margin: 0 0 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px; padding: 3px 4px; border-bottom: 1px solid var(--line); }
+  td { padding: 4px; font-variant-numeric: tabular-nums; font-family: "SF Mono", ui-monospace, Menlo, monospace; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  tr:last-child td { border-bottom: none; }
+  tr.below td { color: var(--muted); opacity: 0.65; }
+  #obsline { color: var(--muted); font-size: 11px; margin-top: 8px; font-family: "SF Mono", ui-monospace, Menlo, monospace; }
+
+  /* Tune panel */
+  #tunePanel {
+    position: fixed; bottom: calc(env(safe-area-inset-bottom, 0px) + 52px); left: 10px; right: 10px;
+    z-index: 15; background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 10px 12px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    display: none;
+  }
+  #tunePanel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.1px; color: var(--accent); margin: 0 0 8px; }
+  .tunerow { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }
+  .tunerow .label { color: var(--muted); font-size: 13px; }
+  .tunerow .ctrl { display: flex; align-items: center; gap: 10px; }
+  .tunerow .v { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 14px; font-weight: 600; min-width: 64px; text-align: center; }
+  .tunerow button {
+    width: 38px; height: 34px; border-radius: 9px; border: 1px solid var(--line);
+    background: #141a2e; color: var(--text); font-size: 17px; font-weight: 700;
+  }
+  #tuneReset { width: 100%; margin-top: 8px; padding: 8px; border-radius: 9px; border: 1px solid var(--line); background: #141a2e; color: var(--muted); font-size: 12px; }
+
+  /* Bottom bar: where the camera is pointing */
+  #botbar {
+    position: fixed; bottom: env(safe-area-inset-bottom, 0); left: 0; right: 0; z-index: 20;
+    display: flex; justify-content: center; padding: 8px 10px 12px;
+  }
+  #pointing {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+    padding: 6px 16px; font-size: 13px; font-weight: 600;
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+</style>
+</head>
+<body>
+
+<video id="cam" autoplay muted playsinline></video>
+<canvas id="sky"></canvas>
+
+<div id="topbar" style="display:none;">
+  <span id="st-geo" class="pill">GPS</span>
+  <span id="st-ori" class="pill">ORI</span>
+  <span id="st-cam" class="pill">CAM</span>
+  <button id="btnData" class="tbtn on">Data</button>
+  <button id="btnTune" class="tbtn">Tune</button>
+</div>
+
+<div id="dataPanel" style="display:none;">
+  <h2>Ephemeris &mdash; verify vs Stellarium before trusting labels</h2>
+  <table>
+    <thead><tr><th>Body</th><th>Azimuth</th><th>Altitude</th><th>Sky</th></tr></thead>
+    <tbody id="ephBody"></tbody>
+  </table>
+  <div id="obsline">waiting for GPS fix&hellip;</div>
+</div>
+
+<div id="tunePanel">
+  <h2>Projection tuning (persisted on this device)</h2>
+  <div class="tunerow"><span class="label">Vertical FOV</span>
+    <span class="ctrl"><button data-k="fov" data-d="-2">&minus;</button><span id="v-fov" class="v"></span><button data-k="fov" data-d="2">+</button></span></div>
+  <div class="tunerow"><span class="label">Azimuth offset</span>
+    <span class="ctrl"><button data-k="azo" data-d="-1">&minus;</button><span id="v-azo" class="v"></span><button data-k="azo" data-d="1">+</button></span></div>
+  <div class="tunerow"><span class="label">Altitude offset</span>
+    <span class="ctrl"><button data-k="alto" data-d="-1">&minus;</button><span id="v-alto" class="v"></span><button data-k="alto" data-d="1">+</button></span></div>
+  <button id="tuneReset">Reset to defaults</button>
+</div>
+
+<div id="botbar" style="display:none;">
+  <span id="pointing">az &mdash; &middot; alt &mdash;</span>
+</div>
+
+<div id="splash">
+  <h1>Reality Engine &middot; Phase 1</h1>
+  <p>Ephemeris + first anchored sky labels. Grants: Location, Motion &amp; Orientation, Camera. Hold the phone upright (portrait) and point the rear camera at the sky.</p>
+  <button id="startBtn" class="startbtn">Start</button>
+</div>
+
+<script src="lib/astronomy.browser.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  /* =========================================================================
+     TUNABLE PROJECTION CONSTANTS (defaults; live-tunable from the Tune panel,
+     tuned values persist in localStorage under "re_phase1_tune")
+     =========================================================================
+     FOV_VERTICAL_DEG
+       Assumed *displayed* vertical field of view in portrait, in degrees.
+       This is not the raw sensor FOV: `object-fit: cover` crops the video to
+       fill the screen, so the effective value depends on device + stream
+       resolution. Tune on-device: aim the reticle at the Moon, then walk the
+       label onto the disc by adjusting FOV (scale) after centering is right.
+       iPhone 15 Pro Max main cam (24 mm equiv) lands somewhere ~55-75.
+     AZ_OFFSET_DEG / ALT_OFFSET_DEG
+       Additive corrections applied to the DEVICE's view direction before
+       projecting, to absorb systematic compass bias (very common on iOS) and
+       any pitch zero-error. Tune with the reticle centered on the Moon so the
+       label sits under the reticle; FOV then only affects off-center scale.
+     SMOOTH
+       Exponential low-pass factor per orientation event (0..1, higher = more
+       responsive, lower = smoother). Applied wrap-aware to heading.
+     -------------------------------------------------------------------------
+     Coordinate conventions used throughout (documented per handoff):
+       Azimuth: 0 = true North, 90 = East, clockwise positive - SAME convention
+         for Astronomy Engine's Horizon() output and iOS webkitCompassHeading.
+       Altitude: degrees above horizon, negative below.
+       Device view direction (portrait, screen toward face, rear camera away):
+         view azimuth  = webkitCompassHeading (+ AZ_OFFSET_DEG)
+         view altitude = beta - 90 (+ ALT_OFFSET_DEG)
+           beta 0 = flat screen-up (camera at nadir, -90), beta 90 = upright
+           (camera at horizon, 0), beta 180 = flat screen-down (zenith, +90).
+       Roll (gamma) is intentionally IGNORED in v1 - hold the phone upright.
+     ========================================================================= */
+  var DEFAULTS = {
+    fov: 60,    // FOV_VERTICAL_DEG
+    azo: 0,     // AZ_OFFSET_DEG
+    alto: 0     // ALT_OFFSET_DEG
+  };
+  var SMOOTH = 0.25;
+  var EPHEMERIS_INTERVAL_MS = 1000; // recompute az/alt 1x/sec (bodies move slowly)
+
+  var BODIES = [
+    { name: "Sun",     glyph: "☉", color: "#ffd75c" },
+    { name: "Moon",    glyph: "☾", color: "#e6ebff" },
+    { name: "Mercury", glyph: "☿", color: "#b9c2dd" },
+    { name: "Venus",   glyph: "♀", color: "#ffe9b8" },
+    { name: "Mars",    glyph: "♂", color: "#ff8a6b" },
+    { name: "Jupiter", glyph: "♃", color: "#ffc78f" },
+    { name: "Saturn",  glyph: "♄", color: "#e8d9a8" }
+  ];
+
+  // ---- state ----
+  var tune = loadTune();
+  var observer = null;            // Astronomy.Observer once GPS fixes
+  var eph = [];                   // [{name, glyph, color, az, alt}]
+  var view = { az: null, alt: null };  // smoothed device view direction
+  var started = false;
+
+  var els = {};
+  ["cam","sky","splash","startBtn","topbar","botbar","dataPanel","tunePanel",
+   "btnData","btnTune","ephBody","obsline","pointing","st-geo","st-ori","st-cam",
+   "v-fov","v-azo","v-alto","tuneReset"].forEach(function (id) {
+    els[id] = document.getElementById(id);
+  });
+
+  function setPill(el, cls, text) { el.className = "pill " + cls; el.textContent = text; }
+
+  // ---- tuning ----
+  function loadTune() {
+    try {
+      var s = JSON.parse(localStorage.getItem("re_phase1_tune"));
+      if (s && isFinite(s.fov) && isFinite(s.azo) && isFinite(s.alto)) return s;
+    } catch (e) {}
+    return { fov: DEFAULTS.fov, azo: DEFAULTS.azo, alto: DEFAULTS.alto };
+  }
+  function saveTune() {
+    try { localStorage.setItem("re_phase1_tune", JSON.stringify(tune)); } catch (e) {}
+    els["v-fov"].textContent = tune.fov.toFixed(0) + "°";
+    els["v-azo"].textContent = (tune.azo > 0 ? "+" : "") + tune.azo.toFixed(0) + "°";
+    els["v-alto"].textContent = (tune.alto > 0 ? "+" : "") + tune.alto.toFixed(0) + "°";
+  }
+  els.tunePanel.addEventListener("click", function (ev) {
+    var b = ev.target.closest("button[data-k]");
+    if (b) {
+      tune[b.dataset.k] += Number(b.dataset.d);
+      if (tune.fov < 20) tune.fov = 20;
+      if (tune.fov > 120) tune.fov = 120;
+      saveTune();
+    }
+  });
+  els.tuneReset.addEventListener("click", function () {
+    tune = { fov: DEFAULTS.fov, azo: DEFAULTS.azo, alto: DEFAULTS.alto };
+    saveTune();
+  });
+  saveTune();
+
+  // ---- panel toggles ----
+  function bindToggle(btn, panel, startOn) {
+    panel.style.display = startOn ? "block" : "none";
+    btn.classList.toggle("on", startOn);
+    btn.addEventListener("click", function () {
+      var show = panel.style.display === "none";
+      panel.style.display = show ? "block" : "none";
+      btn.classList.toggle("on", show);
+    });
+  }
+
+  // ---- math helpers ----
+  var D2R = Math.PI / 180;
+  function enu(azDeg, altDeg) { // unit vector, x=East y=North z=Up
+    var az = azDeg * D2R, alt = altDeg * D2R, c = Math.cos(alt);
+    return [Math.sin(az) * c, Math.cos(az) * c, Math.sin(alt)];
+  }
+  function dot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+  function cross(a, b) {
+    return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+  }
+  function wrap360(d) { d %= 360; return d < 0 ? d + 360 : d; }
+  function angDiff(a, b) { // shortest signed a-b in [-180,180]
+    var d = (a - b) % 360;
+    if (d > 180) d -= 360; if (d < -180) d += 360;
+    return d;
+  }
+  function cardinal(deg) {
+    var pts = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+    return pts[Math.round(deg / 22.5) % 16];
+  }
+
+  /* Pinhole/gnomonic projection of a body's (az,alt) into screen px, given the
+     camera view direction. Camera basis is built with zero roll (portrait
+     assumption): forward = view dir, right = horizontal 90 deg clockwise from
+     view azimuth, up = right x forward. */
+  function project(bodyAz, bodyAlt, w, h) {
+    if (view.az == null) return null;
+    var vAz = wrap360(view.az + tune.azo);
+    var vAlt = view.alt + tune.alto;
+    var fwd = enu(vAz, vAlt);
+    var right = [Math.cos(vAz * D2R), -Math.sin(vAz * D2R), 0];
+    var up = cross(right, fwd);
+    var v = enu(bodyAz, bodyAlt);
+    var zc = dot(v, fwd);
+    if (zc < 0.10) return null; // behind camera / >~84 deg off-axis
+    var f = (h / 2) / Math.tan((tune.fov / 2) * D2R);
+    return { x: w / 2 + (dot(v, right) / zc) * f,
+             y: h / 2 - (dot(v, up)    / zc) * f };
+  }
+
+  // ---- ephemeris (Step A) ----
+  function computeEphemeris() {
+    if (!observer) return;
+    var time = Astronomy.MakeTime(new Date());
+    eph = BODIES.map(function (b) {
+      var eq = Astronomy.Equator(b.name, time, observer, true, true); // of-date equator, aberration
+      var hor = Astronomy.Horizon(time, observer, eq.ra, eq.dec, "normal"); // refraction-corrected
+      return { name: b.name, glyph: b.glyph, color: b.color, az: hor.azimuth, alt: hor.altitude };
+    });
+    renderTable();
+  }
+
+  function renderTable() {
+    var html = "";
+    eph.forEach(function (r) {
+      var up = r.alt > 0;
+      html += '<tr class="' + (up ? "" : "below") + '"><td>' + r.glyph + " " + r.name +
+        "</td><td>" + r.az.toFixed(1) + "° " + cardinal(r.az) +
+        "</td><td>" + r.alt.toFixed(1) + "°" +
+        "</td><td>" + (up ? "UP" : "below") + "</td></tr>";
+    });
+    els.ephBody.innerHTML = html;
+  }
+
+  // ---- sensors ----
+  function startGeo() {
+    if (!("geolocation" in navigator)) { setPill(els["st-geo"], "bad", "GPS n/a"); return; }
+    setPill(els["st-geo"], "warn", "GPS…");
+    navigator.geolocation.watchPosition(function (pos) {
+      var c = pos.coords;
+      observer = new Astronomy.Observer(c.latitude, c.longitude, c.altitude || 0);
+      setPill(els["st-geo"], "good", "GPS ±" + Math.round(c.accuracy) + "m");
+      els.obsline.textContent = "obs " + c.latitude.toFixed(5) + ", " + c.longitude.toFixed(5) +
+        " · " + new Date().toISOString().slice(11, 19) + "Z";
+      computeEphemeris();
+    }, function (err) {
+      setPill(els["st-geo"], "bad", "GPS denied");
+      els.obsline.textContent = "GPS error: " + err.message;
+    }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
+  }
+
+  var oriSeen = false;
+  function onOrientation(e) {
+    var rawHeading = null;
+    if (typeof e.webkitCompassHeading === "number" && !isNaN(e.webkitCompassHeading)) {
+      rawHeading = e.webkitCompassHeading;      // iOS: true heading, 0=N clockwise
+    } else if (e.alpha != null) {
+      rawHeading = wrap360(360 - e.alpha);      // non-iOS fallback
+    }
+    if (rawHeading == null || e.beta == null) return;
+    if (!oriSeen) { oriSeen = true; setPill(els["st-ori"], "good", "ORI live"); }
+
+    var rawAlt = e.beta - 90; // portrait: camera altitude (see convention block)
+    if (view.az == null) { view.az = rawHeading; view.alt = rawAlt; return; }
+    view.az = wrap360(view.az + angDiff(rawHeading, view.az) * SMOOTH);
+    view.alt = view.alt + (rawAlt - view.alt) * SMOOTH;
+  }
+
+  function startOrientation() {
+    setPill(els["st-ori"], "warn", "ORI…");
+    if (typeof DeviceOrientationEvent !== "undefined" &&
+        typeof DeviceOrientationEvent.requestPermission === "function") {
+      DeviceOrientationEvent.requestPermission().then(function (state) {
+        if (state === "granted") window.addEventListener("deviceorientation", onOrientation, true);
+        else setPill(els["st-ori"], "bad", "ORI denied");
+      }).catch(function () { setPill(els["st-ori"], "bad", "ORI error"); });
+    } else {
+      window.addEventListener("deviceorientationabsolute", onOrientation, true);
+      window.addEventListener("deviceorientation", onOrientation, true);
+    }
+  }
+
+  // ---- camera (Step B) ----
+  function startCamera() {
+    setPill(els["st-cam"], "warn", "CAM…");
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setPill(els["st-cam"], "bad", "CAM n/a");
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } }, audio: false
+    }).then(function (stream) {
+      els.cam.srcObject = stream;
+      els.cam.style.display = "block";
+      var p = els.cam.play();
+      if (p && p.catch) p.catch(function () {}); // iOS returns a promise; ignore benign abort
+      setPill(els["st-cam"], "good", "CAM live");
+    }).catch(function (err) {
+      setPill(els["st-cam"], "bad", "CAM " + (err.name === "NotAllowedError" ? "denied" : "error"));
+    });
+  }
+
+  // ---- overlay drawing (Step C) ----
+  var ctx = els.sky.getContext("2d");
+  function resizeCanvas() {
+    var dpr = window.devicePixelRatio || 1;
+    els.sky.width = Math.round(window.innerWidth * dpr);
+    els.sky.height = Math.round(window.innerHeight * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener("resize", resizeCanvas);
+  resizeCanvas();
+
+  function draw() {
+    var w = window.innerWidth, h = window.innerHeight;
+    ctx.clearRect(0, 0, w, h);
+    if (!started) { requestAnimationFrame(draw); return; }
+
+    // center reticle
+    var cx = w / 2, cy = h / 2;
+    ctx.strokeStyle = "rgba(110,168,255,0.9)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(cx, cy, 16, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    [[-26,0,-18,0],[18,0,26,0],[0,-26,0,-18],[0,18,0,26]].forEach(function (s) {
+      ctx.moveTo(cx + s[0], cy + s[1]); ctx.lineTo(cx + s[2], cy + s[3]);
+    });
+    ctx.stroke();
+
+    if (window.innerWidth > window.innerHeight) {
+      ctx.fillStyle = "rgba(255,204,92,0.95)";
+      ctx.font = "600 15px -apple-system, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Rotate to portrait — v1 assumes portrait", cx, cy - 40);
+    }
+
+    // pointing readout
+    if (view.az != null) {
+      var pAz = wrap360(view.az + tune.azo), pAlt = view.alt + tune.alto;
+      els.pointing.textContent = "az " + pAz.toFixed(0) + "° " + cardinal(pAz) +
+        " · alt " + pAlt.toFixed(0) + "°";
+    }
+
+    // body labels (only bodies above horizon get drawn)
+    ctx.font = "600 14px -apple-system, sans-serif";
+    ctx.textAlign = "left";
+    eph.forEach(function (b) {
+      if (b.alt <= 0) return;
+      var p = project(b.az, b.alt, w, h);
+      if (!p || p.x < -40 || p.x > w + 40 || p.y < -40 || p.y > h + 40) return;
+      ctx.fillStyle = b.color;
+      ctx.strokeStyle = "rgba(0,0,0,0.7)";
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = b.color; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2); ctx.stroke();
+      var label = b.glyph + " " + b.name;
+      ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,0.75)";
+      ctx.strokeText(label, p.x + 14, p.y + 5);
+      ctx.fillText(label, p.x + 14, p.y + 5);
+    });
+
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+
+  // ---- start flow ----
+  els.startBtn.addEventListener("click", function () {
+    started = true;
+    els.splash.style.display = "none";
+    els.topbar.style.display = "flex";
+    els.botbar.style.display = "flex";
+    bindToggle(els.btnData, els.dataPanel, true);   // Step A table visible first
+    bindToggle(els.btnTune, els.tunePanel, false);
+    startOrientation(); // must be inside the user gesture (iOS 13+)
+    startCamera();      // ditto
+    startGeo();
+    setInterval(computeEphemeris, EPHEMERIS_INTERVAL_MS);
+  });
+
+  // ---- desktop debug hooks (no effect on device usage) ----
+  window.RE = {
+    debugSetLocation: function (lat, lon, elev) {
+      observer = new Astronomy.Observer(lat, lon, elev || 0);
+      computeEphemeris();
+      els.obsline.textContent = "obs (debug) " + lat + ", " + lon;
+    },
+    debugSetView: function (az, alt) { view.az = az; view.alt = alt; },
+    debugProject: function (az, alt) { return project(az, alt, window.innerWidth, window.innerHeight); },
+    tune: tune
+  };
+})();
+</script>
+</body>
+</html>
