@@ -43,6 +43,34 @@ var DSO_MIN_APPARENT_DEG = 1.6;   // visibility floor; real size kept in table
 var BLOOM = { strength: 0.55, radius: 0.3, threshold: 0.45 };
 var FRAME_BUDGET_MS = 24;         // avg frame above this -> drop bloom
 
+/* Fly-to transition tuning (H07 Fix B). One cubic ease-in-out drives BOTH
+   the orientation slerp and the FOV zoom, so motion starts and ends with
+   zero velocity. The sprite->textured-globe swap at the dashboard seam is
+   hidden behind a short fade to black (a glow sprite cannot visually morph
+   into the H04 globe, so the seam is faded, not popped); the same fade runs
+   in reverse when the dashboard closes back into Space Mode. */
+var FLY = {
+  durMs: 1250,      // main fly-to duration (handoff: keep ~1.0-1.4 s)
+  fovPlanet: 12,    // end FOV when flying to a dashboard planet
+  peekFov: 30,      // end FOV for the Sun/Moon/inner-planet peek
+  peekHoldMs: 350,  // rest at the peek before easing back out
+  returnMs: 700,    // eased FOV return leg of the peek
+  fadeMs: 260       // fade through black at the dashboard seam
+};
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+/* True spherical interpolation between unit direction vectors (constant
+   angular velocity; Vector3.lerp+normalize speeds up mid-arc on long moves). */
+function slerpDir(a, b, t) {
+  var angle = a.angleTo(b);
+  if (angle < 1e-5) return b.clone();
+  var axis = new THREE.Vector3().crossVectors(a, b);
+  if (axis.lengthSq() < 1e-10) axis.set(0, 1, 0); // antipodal: any axis works
+  axis.normalize();
+  return a.clone().applyAxisAngle(axis, angle * t).normalize();
+}
+
 /* Curated deep-sky set. ra (hours, J2000), dec (deg), sizeArcmin = real
    angular size (largest dimension). Files under textures/dso/, 1K, from
    Wikimedia Commons — credits recorded here and in textures/dso/README.md. */
@@ -151,7 +179,8 @@ SpaceMode.prototype.buildDom = function () {
       ".spm-bot{position:absolute;bottom:env(safe-area-inset-bottom,0);left:0;right:0;display:flex;flex-direction:column;align-items:center;gap:8px;padding:8px 10px 14px;z-index:3;}",
       ".spm-chips{display:flex;gap:12px;}",
       ".spm-chip{width:44px;height:44px;border-radius:999px;border:1px solid #222c47;background:rgba(13,17,32,.85);color:#e6ebff;font-size:20px;line-height:1;}",
-      ".spm-hint{color:#8a93b2;font-size:11px;font-family:'SF Mono',ui-monospace,Menlo,monospace;background:rgba(13,17,32,.7);padding:4px 12px;border-radius:999px;}"
+      ".spm-hint{color:#8a93b2;font-size:11px;font-family:'SF Mono',ui-monospace,Menlo,monospace;background:rgba(13,17,32,.7);padding:4px 12px;border-radius:999px;}",
+      ".spm-fade{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity 260ms ease;z-index:4;}"
     ].join("\n");
     document.head.appendChild(st);
   }
@@ -173,9 +202,11 @@ SpaceMode.prototype.buildDom = function () {
     '<button class="spm-chip" data-planet="Mars">♂</button>' +
     "</div>" +
     '<span class="spm-hint">move the phone to look around · tap a planet to fly to it</span>' +
-    "</div>";
+    "</div>" +
+    '<div class="spm-fade"></div>';
   document.body.appendChild(root);
   this.root = root;
+  this.fadeEl = root.querySelector(".spm-fade");
 
   root.querySelector(".spm-back").addEventListener("click", function () {
     closeSpaceMode();
@@ -473,11 +504,13 @@ SpaceMode.prototype.applyCamera = function () {
   }
   if (this.fly) {
     var f = this.fly, t = Math.min(1, (Date.now() - f.t0) / f.durMs);
-    var e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOut
-    dir = f.from.clone().lerp(f.to, e).normalize();
-    this.camera.fov = this.baseFov + (f.fovTo - this.baseFov) * e;
+    var e = easeInOutCubic(t);
+    dir = slerpDir(f.from, f.to, e);
+    this.camera.fov = f.fovFrom + (f.fovTo - f.fovFrom) * e;
     this.camera.updateProjectionMatrix();
     if (t >= 1 && !f.done) { f.done = true; this.flyArrived(f); }
+    // note: t stays clamped at 1 afterwards, so the camera holds the exact
+    // end pose every frame until the next state change -> no drift at rest
   }
   this.camera.position.set(0, 0, 0);
   this.camera.up.copy(up);
@@ -500,54 +533,60 @@ SpaceMode.prototype.tapSelect = function (e) {
   if (best) this.selectPlanet(best);
 };
 
+SpaceMode.prototype.setDragViewTo = function (d) {
+  this.viewDec = Math.asin(THREE.MathUtils.clamp(d.y, -1, 1)) * R2D;
+  this.viewRa = ((Math.atan2(-d.z, d.x) * R2D) + 360) % 360;
+};
+
 SpaceMode.prototype.selectPlanet = function (name) {
+  if (this.fly) return; // let the current transition finish first
   var dash = { Saturn: 1, Jupiter: 1, Mars: 1, Earth: 1 }[name];
   if (name === "Earth") { this.openDash("Earth"); return; } // Earth is underfoot: no fly-to
   var target = this.planetPos[name];
   if (!target) return;
-  if (!dash) { // Sun/Moon/Mercury/Venus: brief zoom toward it and back
-    this.fly = { from: this.camera.getWorldDirection(new THREE.Vector3()), to: target.clone().normalize(),
-                 t0: Date.now(), durMs: 900, fovTo: 30, bounce: true, name: name };
-    return;
-  }
-  this.fly = { from: this.camera.getWorldDirection(new THREE.Vector3()), to: target.clone().normalize(),
-               t0: Date.now(), durMs: 1200, fovTo: 11, name: name };
+  var from = this.camera.getWorldDirection(new THREE.Vector3());
+  var to = target.clone().normalize();
+  this.fly = {
+    kind: dash ? "dash" : "peek",
+    from: from, to: to, t0: Date.now(), durMs: FLY.durMs,
+    fovFrom: this.camera.fov, fovTo: dash ? FLY.fovPlanet : FLY.peekFov,
+    name: name
+  };
 };
 
 SpaceMode.prototype.flyArrived = function (f) {
   var self = this;
-  if (f.bounce) { // non-dashboard body: ease the FOV back out
+  if (f.kind === "peek") { // Sun/Moon/inner planets: rest, then ease back out
     setTimeout(function () {
-      if (self.disposed) return;
-      self.fly = null;
-      self.camera.fov = self.baseFov;
-      self.camera.updateProjectionMatrix();
-      // keep looking at it in drag terms
-      var d = f.to;
-      self.viewDec = Math.asin(d.y) * R2D;
-      self.viewRa = ((Math.atan2(-d.z, d.x) * R2D) + 360) % 360;
-    }, 500);
+      if (self.disposed || !self.fly) return;
+      self.fly = { kind: "return", from: f.to, to: f.to, t0: Date.now(),
+                   durMs: FLY.returnMs, fovFrom: FLY.peekFov, fovTo: self.baseFov, name: f.name };
+    }, FLY.peekHoldMs);
     return;
   }
+  if (f.kind === "return") {
+    this.fly = null;
+    this.camera.fov = this.baseFov;
+    this.camera.updateProjectionMatrix();
+    this.setDragViewTo(f.to); // drag view now points at the body: no jump
+    return;
+  }
+  // "dash": hold the end pose, fade to black, then hand off to the dashboard
+  this.fadeEl.style.opacity = "1";
   setTimeout(function () {
     if (self.disposed) return;
     self.openDash(f.name);
-  }, 120);
+  }, FLY.fadeMs + 40);
 };
 
 SpaceMode.prototype.openDash = function (name) {
-  var self = this;
-  this.suspend();
-  if (this.opts.openDashboard) this.opts.openDashboard(name);
-  // camera resets when we resume
   var d = this.fly ? this.fly.to : null;
   this.fly = null;
   this.camera.fov = this.baseFov;
   this.camera.updateProjectionMatrix();
-  if (d) {
-    this.viewDec = Math.asin(d.y) * R2D;
-    this.viewRa = ((Math.atan2(-d.z, d.x) * R2D) + 360) % 360;
-  }
+  if (d) this.setDragViewTo(d); // resume looking where we flew
+  this.suspend();
+  if (this.opts.openDashboard) this.opts.openDashboard(name);
 };
 
 /* ------------------------------- loop ------------------------------- */
@@ -555,6 +594,12 @@ SpaceMode.prototype.openDash = function (name) {
 SpaceMode.prototype.suspend = function () { this.suspended = true; this.root.style.visibility = "hidden"; };
 SpaceMode.prototype.resume = function () {
   this.suspended = false; this.root.style.visibility = "visible";
+  // fade back in from black so the dashboard-close seam is as smooth as entry
+  var fe = this.fadeEl;
+  fe.style.opacity = "1";
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () { fe.style.opacity = "0"; });
+  });
 };
 
 SpaceMode.prototype.loop = function () {

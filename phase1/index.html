@@ -73,11 +73,16 @@
   .tbtn.on { border-color: var(--accent); color: var(--accent); }
 
   /* Targets picker (Handoff 05): tap a row to open its 3D dashboard */
+  /* --panel-top is set from JS to the measured bottom of the (possibly
+     two-row) toolbar, so panels always open fully below it (H07 Fix A). */
   #targetsPanel {
-    position: fixed; top: calc(env(safe-area-inset-top, 0px) + 46px); left: 10px; right: 10px;
+    position: fixed; top: var(--panel-top, calc(env(safe-area-inset-top, 0px) + 96px));
+    left: 10px; right: 10px;
     z-index: 15; background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
     padding: 10px 12px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    max-height: 60vh; overflow-y: auto;
+    max-height: calc(100vh - var(--panel-top, 96px) - 140px);
+    max-height: calc(100dvh - var(--panel-top, 96px) - 140px);
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
   }
   #targetsPanel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.1px; color: var(--accent); margin: 0 0 8px; }
   .trow {
@@ -101,10 +106,13 @@
 
   /* Data panel: Step A verification table */
   #dataPanel {
-    position: fixed; top: calc(env(safe-area-inset-top, 0px) + 46px); left: 10px; right: 10px;
+    position: fixed; top: var(--panel-top, calc(env(safe-area-inset-top, 0px) + 96px));
+    left: 10px; right: 10px;
     z-index: 15; background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
     padding: 10px 12px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    max-height: 60vh; overflow-y: auto;
+    max-height: calc(100vh - var(--panel-top, 96px) - 140px);
+    max-height: calc(100dvh - var(--panel-top, 96px) - 140px);
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
   }
   #dataPanel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.1px; color: var(--accent); margin: 0 0 8px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -359,6 +367,20 @@
   bindLayer(els.btnNames, "names");
   bindLayer(els.btnBelow, "below");
 
+  /* Panels open below the REAL toolbar bottom (it wraps to two rows on
+     phones); measured, not hard-coded, and refreshed on resize/rotation and
+     every open so nothing is ever clipped under the toolbar (H07 Fix A). */
+  function updatePanelTop() {
+    if (els.topbar.style.display === "none") return;
+    var r = els.topbar.getBoundingClientRect();
+    document.documentElement.style.setProperty("--panel-top", Math.ceil(r.bottom + 8) + "px");
+  }
+  window.addEventListener("resize", updatePanelTop);
+  window.addEventListener("orientationchange", function () { setTimeout(updatePanelTop, 250); });
+  // The toolbar's height changes at runtime (status pill text grows and can
+  // wrap it to another row) — observe it so open panels reposition live.
+  if (window.ResizeObserver) new ResizeObserver(updatePanelTop).observe(els.topbar);
+
   // ---- panel toggles (excludes: [btn, panel] pairs closed when this opens) ----
   function bindToggle(btn, panel, startOn, excludes) {
     panel.style.display = startOn ? "block" : "none";
@@ -368,6 +390,7 @@
       if (show && excludes) excludes.forEach(function (x) {
         x[1].style.display = "none"; x[0].classList.remove("on");
       });
+      if (show) updatePanelTop();
       panel.style.display = show ? "block" : "none";
       btn.classList.toggle("on", show);
       if (panel === els.targetsPanel && show) renderTargets();
@@ -839,6 +862,8 @@
     els.splash.style.display = "none";
     els.topbar.style.display = "flex";
     els.botbar.style.display = "flex";
+    updatePanelTop(); // toolbar just became visible; measure before first open
+    setInterval(updatePanelTop, 1000); // self-heal: pill text changes can rewrap the toolbar
     bindToggle(els.btnData, els.dataPanel, true, [[els.btnTargets, els.targetsPanel]]);
     bindToggle(els.btnTargets, els.targetsPanel, false, [[els.btnData, els.dataPanel]]);
     bindToggle(els.btnTune, els.tunePanel, false);
