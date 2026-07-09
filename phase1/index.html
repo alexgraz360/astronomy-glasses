@@ -129,6 +129,9 @@
   <span id="st-cam" class="pill">CAM</span>
   <button id="btnData" class="tbtn on">Data</button>
   <button id="btnTune" class="tbtn">Tune</button>
+  <button id="btnStars" class="tbtn on">Stars</button>
+  <button id="btnLines" class="tbtn on">Lines</button>
+  <button id="btnNames" class="tbtn on">Names</button>
 </div>
 
 <div id="dataPanel" style="display:none;">
@@ -138,6 +141,7 @@
     <tbody id="ephBody"></tbody>
   </table>
   <div id="obsline">waiting for GPS fix&hellip;</div>
+  <div id="dataMeta" style="color:var(--muted);font-size:11px;margin-top:4px;font-family:'SF Mono',ui-monospace,Menlo,monospace;">star catalog loading&hellip;</div>
 </div>
 
 <div id="tunePanel">
@@ -203,7 +207,24 @@
     alto: 0     // ALT_OFFSET_DEG
   };
   var SMOOTH = 0.25;
-  var EPHEMERIS_INTERVAL_MS = 1000; // recompute az/alt 1x/sec (bodies move slowly)
+  var EPHEMERIS_INTERVAL_MS = 1000; // recompute planet az/alt 1x/sec (bodies move slowly)
+
+  /* ---- Star catalog constants (Handoff 03) ----
+     STAR_TICK_MS: full-catalog horizontal-coordinate recompute cadence (3 Hz,
+       within the 2-4 Hz target; measured ~0.5 ms per tick for 2865 stars, so
+       there is huge headroom). Per-frame work is projection + draw only.
+     STAR_LABEL_MAG_MAX: label only stars with a proper name AND mag <= this.
+     STAR_MIN_UP: cull stars/line vertices whose sin(altitude) is below this
+       (slightly under the horizon so dots don't pop at exactly 0 deg).
+     Star positions use J2000 RA/Dec rotated with Rotation_EQJ_HOR, which
+     precesses to of-date properly (MORE accurate than feeding J2000 straight
+     to Horizon(); verified equal within the ~0.37 deg precession residual).
+     Refraction is applied only below REFRACT_BELOW_ALT_DEG where it exceeds
+     ~0.1 deg, matching the "normal" refraction used for planets. */
+  var STAR_TICK_MS = 333;
+  var STAR_LABEL_MAG_MAX = 2.5;
+  var STAR_MIN_UP = -0.01;          // sin(alt) cutoff ~ -0.6 deg
+  var REFRACT_BELOW_ALT_DEG = 15;
 
   var BODIES = [
     { name: "Sun",     glyph: "☉", color: "#ffd75c" },
@@ -224,7 +245,8 @@
 
   var els = {};
   ["cam","sky","splash","startBtn","topbar","botbar","dataPanel","tunePanel",
-   "btnData","btnTune","ephBody","obsline","pointing","st-geo","st-ori","st-cam",
+   "btnData","btnTune","btnStars","btnLines","btnNames","dataMeta",
+   "ephBody","obsline","pointing","st-geo","st-ori","st-cam",
    "v-fov","v-azo","v-alto","tuneReset"].forEach(function (id) {
     els[id] = document.getElementById(id);
   });
@@ -260,6 +282,27 @@
   });
   saveTune();
 
+  // ---- layer toggles (Stars / Lines / Names), persisted like Tune ----
+  var layers = loadLayers();
+  function loadLayers() {
+    try {
+      var s = JSON.parse(localStorage.getItem("re_phase1_layers"));
+      if (s && typeof s.stars === "boolean") return s;
+    } catch (e) {}
+    return { stars: true, lines: true, names: true };
+  }
+  function bindLayer(btn, key) {
+    btn.classList.toggle("on", layers[key]);
+    btn.addEventListener("click", function () {
+      layers[key] = !layers[key];
+      btn.classList.toggle("on", layers[key]);
+      try { localStorage.setItem("re_phase1_layers", JSON.stringify(layers)); } catch (e) {}
+    });
+  }
+  bindLayer(els.btnStars, "stars");
+  bindLayer(els.btnLines, "lines");
+  bindLayer(els.btnNames, "names");
+
   // ---- panel toggles ----
   function bindToggle(btn, panel, startOn) {
     panel.style.display = startOn ? "block" : "none";
@@ -292,23 +335,136 @@
     return pts[Math.round(deg / 22.5) % 16];
   }
 
-  /* Pinhole/gnomonic projection of a body's (az,alt) into screen px, given the
-     camera view direction. Camera basis is built with zero roll (portrait
-     assumption): forward = view dir, right = horizontal 90 deg clockwise from
-     view azimuth, up = right x forward. */
-  function project(bodyAz, bodyAlt, w, h) {
+  /* Pinhole/gnomonic projection. Camera basis is built with zero roll
+     (portrait assumption): forward = view dir, right = horizontal 90 deg
+     clockwise from view azimuth, up = right x forward. ONE camera per frame
+     is shared by planets, stars, and constellation lines so a single Tune
+     calibration moves every layer together. */
+  function makeCamera(w, h) {
     if (view.az == null) return null;
     var vAz = wrap360(view.az + tune.azo);
     var vAlt = view.alt + tune.alto;
     var fwd = enu(vAz, vAlt);
     var right = [Math.cos(vAz * D2R), -Math.sin(vAz * D2R), 0];
     var up = cross(right, fwd);
+    return {
+      fx: fwd[0], fy: fwd[1], fz: fwd[2],
+      rx: right[0], ry: right[1], rz: right[2],
+      ux: up[0], uy: up[1], uz: up[2],
+      cx: w / 2, cy: h / 2,
+      f: (h / 2) / Math.tan((tune.fov / 2) * D2R)
+    };
+  }
+  // Projects an ENU unit vector; writes to `out` {x,y}, returns false if the
+  // point is behind the camera (zc < 0.10, i.e. >~84 deg off-axis).
+  function projectVec(cam, x, y, z, out) {
+    var zc = x * cam.fx + y * cam.fy + z * cam.fz;
+    if (zc < 0.10) return false;
+    out.x = cam.cx + ((x * cam.rx + y * cam.ry + z * cam.rz) / zc) * cam.f;
+    out.y = cam.cy - ((x * cam.ux + y * cam.uy + z * cam.uz) / zc) * cam.f;
+    return true;
+  }
+  var _pt = { x: 0, y: 0 };
+  function project(bodyAz, bodyAlt, w, h) { // az/alt wrapper (planets, debug)
+    var cam = makeCamera(w, h);
+    if (!cam) return null;
     var v = enu(bodyAz, bodyAlt);
-    var zc = dot(v, fwd);
-    if (zc < 0.10) return null; // behind camera / >~84 deg off-axis
-    var f = (h / 2) / Math.tan((tune.fov / 2) * D2R);
-    return { x: w / 2 + (dot(v, right) / zc) * f,
-             y: h / 2 - (dot(v, up)    / zc) * f };
+    return projectVec(cam, v[0], v[1], v[2], _pt) ? { x: _pt.x, y: _pt.y } : null;
+  }
+
+  /* ---- star catalog + constellation lines (Handoff 03) ----
+     Data vendored under data/ (HYG v4.1 subset, CC BY-SA 4.0; d3-celestial
+     lines, BSD-3). J2000 unit vectors are precomputed once at load; starTick()
+     rotates them all into the horizontal frame with one Rotation_EQJ_HOR
+     matrix per tick, storing ENU vectors (x=E, y=N, z=Up) that the draw loop
+     projects with the same camera as the planets. */
+  var starDb = null;   // { n, enu:Float32Array, mag:Float32Array, labels:[{i,name}] }
+  var lineDb = null;   // { verts:Float64Array (J2000), enu:Float32Array, polys:[[start,len],...] }
+  var starVecJ2000 = null;
+
+  function raDecToXyz(raHours, decDeg, arr, off) {
+    var ra = raHours * 15 * D2R, dec = decDeg * D2R, c = Math.cos(dec);
+    arr[off] = c * Math.cos(ra); arr[off + 1] = c * Math.sin(ra); arr[off + 2] = Math.sin(dec);
+  }
+
+  function loadSkyData() {
+    Promise.all([
+      fetch("data/stars.json").then(function (r) { return r.json(); }),
+      fetch("data/constellations.json").then(function (r) { return r.json(); })
+    ]).then(function (res) {
+      var sj = res[0], cj = res[1];
+      var n = sj.stars.length;
+      starVecJ2000 = new Float64Array(n * 3);
+      var mag = new Float32Array(n);
+      var labels = [];
+      for (var i = 0; i < n; i++) {
+        var s = sj.stars[i];
+        raDecToXyz(s[0], s[1], starVecJ2000, i * 3);
+        mag[i] = s[2];
+        if (s[3] && s[2] <= STAR_LABEL_MAG_MAX) labels.push({ i: i, name: s[3] });
+      }
+      starDb = { n: n, enu: new Float32Array(n * 3), mag: mag, labels: labels, ready: false };
+
+      var polys = [], vcount = 0, id, p, poly;
+      for (id in cj.lines) for (p = 0; p < cj.lines[id].length; p++) vcount += cj.lines[id][p].length;
+      var verts = new Float64Array(vcount * 3);
+      var off = 0;
+      for (id in cj.lines) {
+        for (p = 0; p < cj.lines[id].length; p++) {
+          poly = cj.lines[id][p];
+          polys.push([off, poly.length]);
+          for (var v = 0; v < poly.length; v++) { raDecToXyz(poly[v][0], poly[v][1], verts, off * 3); off++; }
+        }
+      }
+      lineDb = { verts: verts, enu: new Float32Array(vcount * 3), polys: polys, ready: false };
+
+      els.dataMeta.textContent = "stars: " + n + " (mag ≤ " + sj.meta.mag_cutoff + ", HYG v4.1) · " +
+        cj.meta.constellations + " constellations · labels: " + labels.length;
+    }).catch(function (err) {
+      els.dataMeta.textContent = "star data failed to load: " + err;
+    });
+  }
+  loadSkyData();
+
+  /* Rotate a J2000 xyz array into ENU horizontal vectors using rot (3x3 from
+     Rotation_EQJ_HOR). astronomy-engine HOR frame: az = 360 - atan2(y,x),
+     alt = asin(z) => x=N, y=W, z=Up; converted here to ENU (E=-y, N=x, U=z).
+     Refraction ("normal", same model as the planets' Horizon call) is applied
+     below REFRACT_BELOW_ALT_DEG by tilting the vector up. */
+  function rotateToENU(src, dst, count, m) {
+    var m00 = m[0][0], m01 = m[0][1], m02 = m[0][2];
+    var m10 = m[1][0], m11 = m[1][1], m12 = m[1][2];
+    var m20 = m[2][0], m21 = m[2][1], m22 = m[2][2];
+    var R2D = 1 / D2R;
+    for (var i = 0; i < count; i++) {
+      var o = i * 3, x = src[o], y = src[o + 1], z = src[o + 2];
+      var hx = m00 * x + m10 * y + m20 * z;
+      var hy = m01 * x + m11 * y + m21 * z;
+      var hz = m02 * x + m12 * y + m22 * z;
+      var E = -hy, N = hx, U = hz;
+      if (U > STAR_MIN_UP && U < Math.sin(REFRACT_BELOW_ALT_DEG * D2R)) {
+        var altDeg = Math.asin(U) * R2D;
+        var refr = Astronomy.Refraction("normal", altDeg);
+        if (refr > 0.001) {
+          var altR = (altDeg + refr) * D2R;
+          var cosOld = Math.cos(Math.asin(U));
+          if (cosOld > 1e-6) {
+            var scale = Math.cos(altR) / cosOld;
+            E *= scale; N *= scale;
+          }
+          U = Math.sin(altR);
+        }
+      }
+      dst[o] = E; dst[o + 1] = N; dst[o + 2] = U;
+    }
+  }
+
+  function starTick() {
+    if (!observer || !starDb) return;
+    var rot = Astronomy.Rotation_EQJ_HOR(Astronomy.MakeTime(new Date()), observer);
+    rotateToENU(starVecJ2000, starDb.enu, starDb.n, rot.rot);
+    starDb.ready = true;
+    if (lineDb) { rotateToENU(lineDb.verts, lineDb.enu, lineDb.verts.length / 3, rot.rot); lineDb.ready = true; }
   }
 
   // ---- ephemeris (Step A) ----
@@ -414,12 +570,100 @@
   window.addEventListener("resize", resizeCanvas);
   resizeCanvas();
 
-  function draw() {
+  var _pa = { x: 0, y: 0 }, _pb = { x: 0, y: 0 };
+  function starRadius(mag) { // brighter = bigger; mag -1.4 -> ~4.8px, 5.5 -> 0.8px
+    var r = 4.0 - 0.58 * mag;
+    return r > 4.8 ? 4.8 : (r < 0.8 ? 0.8 : r);
+  }
+
+  function drawFrame() {
     var w = window.innerWidth, h = window.innerHeight;
     ctx.clearRect(0, 0, w, h);
-    if (!started) { requestAnimationFrame(draw); return; }
+    if (!started) return;
 
-    // center reticle
+    var cam = makeCamera(w, h);
+    var margin = 60, i, o, p;
+
+    // constellation lines (dim, under everything)
+    if (cam && layers.lines && lineDb && lineDb.ready) {
+      ctx.strokeStyle = "rgba(110,168,255,0.35)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      var e = lineDb.enu;
+      for (var pl = 0; pl < lineDb.polys.length; pl++) {
+        var start = lineDb.polys[pl][0], len = lineDb.polys[pl][1];
+        var prevOk = false;
+        for (i = 0; i < len; i++) {
+          o = (start + i) * 3;
+          var ok = projectVec(cam, e[o], e[o + 1], e[o + 2], _pa);
+          if (ok && prevOk &&
+              !((_pa.x < -margin && _pb.x < -margin) || (_pa.x > w + margin && _pb.x > w + margin) ||
+                (_pa.y < -margin && _pb.y < -margin) || (_pa.y > h + margin && _pb.y > h + margin))) {
+            ctx.moveTo(_pb.x, _pb.y); ctx.lineTo(_pa.x, _pa.y);
+          }
+          prevOk = ok;
+          _pb.x = _pa.x; _pb.y = _pa.y;
+        }
+      }
+      ctx.stroke();
+    }
+
+    // star dots (single path + single fill; radius scaled by magnitude)
+    if (cam && layers.stars && starDb && starDb.ready) {
+      ctx.fillStyle = "#eef2ff";
+      ctx.beginPath();
+      var se = starDb.enu, sm = starDb.mag;
+      for (i = 0; i < starDb.n; i++) {
+        o = i * 3;
+        if (se[o + 2] <= STAR_MIN_UP) continue; // below horizon
+        if (!projectVec(cam, se[o], se[o + 1], se[o + 2], _pa)) continue;
+        if (_pa.x < -10 || _pa.x > w + 10 || _pa.y < -10 || _pa.y > h + 10) continue;
+        var r = starRadius(sm[i]);
+        ctx.moveTo(_pa.x + r, _pa.y);
+        ctx.arc(_pa.x, _pa.y, r, 0, Math.PI * 2);
+      }
+      ctx.fill();
+    }
+
+    // star names (named + bright only, to avoid clutter; independent of dots)
+    if (cam && layers.names && starDb && starDb.ready) {
+      var sne = starDb.enu;
+      ctx.font = "600 11px -apple-system, sans-serif";
+      ctx.textAlign = "left";
+      for (i = 0; i < starDb.labels.length; i++) {
+        var L = starDb.labels[i];
+        o = L.i * 3;
+        if (sne[o + 2] <= STAR_MIN_UP) continue;
+        if (!projectVec(cam, sne[o], sne[o + 1], sne[o + 2], _pa)) continue;
+        if (_pa.x < 0 || _pa.x > w || _pa.y < 0 || _pa.y > h) continue;
+        ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,0.75)";
+        ctx.fillStyle = "#cfe0ff";
+        ctx.strokeText(L.name, _pa.x + 8, _pa.y - 6);
+        ctx.fillText(L.name, _pa.x + 8, _pa.y - 6);
+      }
+    }
+
+    // planet/Sun/Moon labels (on top of stars)
+    ctx.font = "600 14px -apple-system, sans-serif";
+    ctx.textAlign = "left";
+    eph.forEach(function (b) {
+      if (b.alt <= 0) return;
+      var p = project(b.az, b.alt, w, h);
+      if (!p || p.x < -40 || p.x > w + 40 || p.y < -40 || p.y > h + 40) return;
+      ctx.fillStyle = b.color;
+      ctx.strokeStyle = "rgba(0,0,0,0.7)";
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = b.color; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2); ctx.stroke();
+      var label = b.glyph + " " + b.name;
+      ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,0.75)";
+      ctx.strokeText(label, p.x + 14, p.y + 5);
+      ctx.fillText(label, p.x + 14, p.y + 5);
+    });
+
+    // center reticle (always on top)
     var cx = w / 2, cy = h / 2;
     ctx.strokeStyle = "rgba(110,168,255,0.9)";
     ctx.lineWidth = 1.5;
@@ -443,30 +687,9 @@
       els.pointing.textContent = "az " + pAz.toFixed(0) + "° " + cardinal(pAz) +
         " · alt " + pAlt.toFixed(0) + "°";
     }
-
-    // body labels (only bodies above horizon get drawn)
-    ctx.font = "600 14px -apple-system, sans-serif";
-    ctx.textAlign = "left";
-    eph.forEach(function (b) {
-      if (b.alt <= 0) return;
-      var p = project(b.az, b.alt, w, h);
-      if (!p || p.x < -40 || p.x > w + 40 || p.y < -40 || p.y > h + 40) return;
-      ctx.fillStyle = b.color;
-      ctx.strokeStyle = "rgba(0,0,0,0.7)";
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2); ctx.stroke();
-      ctx.strokeStyle = b.color; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2); ctx.stroke();
-      var label = b.glyph + " " + b.name;
-      ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,0.75)";
-      ctx.strokeText(label, p.x + 14, p.y + 5);
-      ctx.fillText(label, p.x + 14, p.y + 5);
-    });
-
-    requestAnimationFrame(draw);
   }
-  requestAnimationFrame(draw);
+  function drawLoop() { drawFrame(); requestAnimationFrame(drawLoop); }
+  requestAnimationFrame(drawLoop);
 
   // ---- start flow ----
   els.startBtn.addEventListener("click", function () {
@@ -480,6 +703,7 @@
     startCamera();      // ditto
     startGeo();
     setInterval(computeEphemeris, EPHEMERIS_INTERVAL_MS);
+    setInterval(starTick, STAR_TICK_MS);
   });
 
   // ---- desktop debug hooks (no effect on device usage) ----
@@ -491,6 +715,18 @@
     },
     debugSetView: function (az, alt) { view.az = az; view.alt = alt; },
     debugProject: function (az, alt) { return project(az, alt, window.innerWidth, window.innerHeight); },
+    debugStarTick: function () { starTick(); return { stars: starDb && starDb.ready, lines: lineDb && lineDb.ready }; },
+    debugDrawFrame: drawFrame,
+    debugStarAzAlt: function (idx) { // returns [az, alt] of star idx from the live ENU buffer
+      if (!starDb || !starDb.ready) return null;
+      var o = idx * 3, E = starDb.enu[o], N = starDb.enu[o + 1], U = starDb.enu[o + 2];
+      return [wrap360(Math.atan2(E, N) / D2R), Math.asin(U) / D2R];
+    },
+    debugCounts: function () {
+      return { stars: starDb ? starDb.n : 0, labels: starDb ? starDb.labels.length : 0,
+               polylines: lineDb ? lineDb.polys.length : 0 };
+    },
+    layers: layers,
     tune: tune
   };
 })();
