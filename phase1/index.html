@@ -162,6 +162,7 @@
   <span id="st-geo" class="pill">GPS</span>
   <span id="st-ori" class="pill">ORI</span>
   <span id="st-cam" class="pill">CAM</span>
+  <button id="btnSpace" class="tbtn" style="border-color:#6ea8ff;">🌌 Space</button>
   <button id="btnTargets" class="tbtn">Targets</button>
   <button id="btnData" class="tbtn on">Data</button>
   <button id="btnTune" class="tbtn">Tune</button>
@@ -907,13 +908,17 @@
     tune: tune,
     setARPaused: setARPaused,
     getObserver: function () { return observer; },
+    getView: function () { return view; },
     isARPaused: function () { return arPaused; }
   };
 })();
 </script>
 <script type="module">
-/* Dashboard bootstrap (Handoff 04): three.js + the dashboard module load
-   lazily on first open, so the AR page stays light. */
+/* Module bootstrap (H04 dashboards + H06 Space Mode). Both load lazily on
+   first use so the AR page stays light. Mode-aware: closing a dashboard
+   returns to Space Mode when it was opened from there, else to AR. */
+let spaceMod = null;
+
 window.RE_openDashboard = async function (name) {
   try {
     RE.setARPaused(true);
@@ -922,13 +927,36 @@ window.RE_openDashboard = async function (name) {
     window.RE_dashDebug = mod._debug;
     mod.openDashboard(name, {
       observer: RE.getObserver(),
-      onClose: function () { RE.setARPaused(false); }
+      onClose: function () {
+        if (spaceMod && spaceMod.isOpen()) spaceMod.resumeFromDashboard();
+        else RE.setARPaused(false);
+      }
     });
   } catch (e) {
     console.error("dashboard failed", e);
+    if (spaceMod && spaceMod.isOpen()) spaceMod.resumeFromDashboard();
+    else RE.setARPaused(false);
+  }
+};
+
+window.RE_openSpace = async function () {
+  try {
+    RE.setARPaused(true); // pauses camera feed + AR draw/tick loops
+    spaceMod = await import("./space/space-mode.js");
+    window.RE_spaceDebug = spaceMod._debug;
+    window.RE_closeSpace = spaceMod.closeSpaceMode;
+    spaceMod.openSpaceMode({
+      getView: RE.getView,
+      getObserver: RE.getObserver,
+      openDashboard: window.RE_openDashboard,
+      onExit: function () { RE.setARPaused(false); } // back to live AR
+    });
+  } catch (e) {
+    console.error("space mode failed", e);
     RE.setARPaused(false);
   }
 };
+document.getElementById("btnSpace").addEventListener("click", function () { window.RE_openSpace(); });
 </script>
 </body>
 </html>
