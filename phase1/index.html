@@ -72,6 +72,33 @@
   .tbtn + .tbtn { margin-left: 0; }
   .tbtn.on { border-color: var(--accent); color: var(--accent); }
 
+  /* Targets picker (Handoff 05): tap a row to open its 3D dashboard */
+  #targetsPanel {
+    position: fixed; top: calc(env(safe-area-inset-top, 0px) + 46px); left: 10px; right: 10px;
+    z-index: 15; background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 10px 12px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    max-height: 60vh; overflow-y: auto;
+  }
+  #targetsPanel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.1px; color: var(--accent); margin: 0 0 8px; }
+  .trow {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 9px 6px; border: none; background: none; color: var(--text);
+    border-bottom: 1px solid rgba(255,255,255,0.05); text-align: left; font-size: 14px;
+  }
+  .trow:last-child { border-bottom: none; }
+  .trow:active { background: rgba(110,168,255,0.08); }
+  .trow .tglyph { width: 22px; text-align: center; font-size: 16px; }
+  .trow .tname { font-weight: 600; min-width: 68px; }
+  .trow .tazalt { flex: 1; color: var(--muted); font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; }
+  .trow .tflag { font-size: 11px; font-weight: 700; }
+  .trow .tflag.up { color: var(--good); }
+  .trow .tflag.down { color: var(--muted); }
+  .trow .t3d {
+    font-size: 10px; font-weight: 700; color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 6px; padding: 2px 6px;
+  }
+  .trow.nodash .t3d { visibility: hidden; }
+
   /* Data panel: Step A verification table */
   #dataPanel {
     position: fixed; top: calc(env(safe-area-inset-top, 0px) + 46px); left: 10px; right: 10px;
@@ -135,11 +162,18 @@
   <span id="st-geo" class="pill">GPS</span>
   <span id="st-ori" class="pill">ORI</span>
   <span id="st-cam" class="pill">CAM</span>
+  <button id="btnTargets" class="tbtn">Targets</button>
   <button id="btnData" class="tbtn on">Data</button>
   <button id="btnTune" class="tbtn">Tune</button>
   <button id="btnStars" class="tbtn on">Stars</button>
   <button id="btnLines" class="tbtn on">Lines</button>
   <button id="btnNames" class="tbtn on">Names</button>
+  <button id="btnBelow" class="tbtn">Below</button>
+</div>
+
+<div id="targetsPanel" style="display:none;">
+  <h2>Targets &mdash; tap a planet with 3D to open its dashboard</h2>
+  <div id="targetsBody"></div>
 </div>
 
 <div id="dataPanel" style="display:none;">
@@ -262,6 +296,7 @@
   var els = {};
   ["cam","sky","splash","startBtn","topbar","botbar","dataPanel","tunePanel",
    "btnData","btnTune","btnStars","btnLines","btnNames","dataMeta",
+   "btnTargets","btnBelow","targetsPanel","targetsBody",
    "ephBody","obsline","pointing","st-geo","st-ori","st-cam",
    "v-fov","v-azo","v-alto","tuneReset"].forEach(function (id) {
     els[id] = document.getElementById(id);
@@ -298,14 +333,17 @@
   });
   saveTune();
 
-  // ---- layer toggles (Stars / Lines / Names), persisted like Tune ----
+  // ---- layer toggles (Stars / Lines / Names / Below-horizon), persisted ----
   var layers = loadLayers();
   function loadLayers() {
     try {
       var s = JSON.parse(localStorage.getItem("re_phase1_layers"));
-      if (s && typeof s.stars === "boolean") return s;
+      if (s && typeof s.stars === "boolean") {
+        s.below = s.below === true; // added H05; older saves lack it -> default OFF
+        return s;
+      }
     } catch (e) {}
-    return { stars: true, lines: true, names: true };
+    return { stars: true, lines: true, names: true, below: false };
   }
   function bindLayer(btn, key) {
     btn.classList.toggle("on", layers[key]);
@@ -318,17 +356,73 @@
   bindLayer(els.btnStars, "stars");
   bindLayer(els.btnLines, "lines");
   bindLayer(els.btnNames, "names");
+  bindLayer(els.btnBelow, "below");
 
-  // ---- panel toggles ----
-  function bindToggle(btn, panel, startOn) {
+  // ---- panel toggles (excludes: [btn, panel] pairs closed when this opens) ----
+  function bindToggle(btn, panel, startOn, excludes) {
     panel.style.display = startOn ? "block" : "none";
     btn.classList.toggle("on", startOn);
     btn.addEventListener("click", function () {
       var show = panel.style.display === "none";
+      if (show && excludes) excludes.forEach(function (x) {
+        x[1].style.display = "none"; x[0].classList.remove("on");
+      });
       panel.style.display = show ? "block" : "none";
       btn.classList.toggle("on", show);
+      if (panel === els.targetsPanel && show) renderTargets();
     });
   }
+
+  /* ---- Targets picker (Handoff 05) ----
+     Lists the ephemeris bodies (+ Earth, which never appears in the sky) with
+     live az/alt. Rows with a 3D dashboard open it directly regardless of
+     horizon; other bodies get a short pulsing highlight in the AR view. */
+  var TARGETS = [
+    { name: "Sun",     glyph: "☉" },
+    { name: "Moon",    glyph: "☾" },
+    { name: "Mercury", glyph: "☿" },
+    { name: "Venus",   glyph: "♀" },
+    { name: "Mars",    glyph: "♂", dash: true },
+    { name: "Jupiter", glyph: "♃", dash: true },
+    { name: "Saturn",  glyph: "♄", dash: true },
+    { name: "Earth",   glyph: "⊕", dash: true, earth: true }
+  ];
+  var highlight = { name: null, until: 0 };
+
+  function renderTargets() {
+    if (els.targetsPanel.style.display === "none") return;
+    var byName = {};
+    eph.forEach(function (b) { byName[b.name] = b; });
+    var html = "";
+    TARGETS.forEach(function (t) {
+      var b = byName[t.name];
+      var azalt = t.earth ? "you are here" :
+        (b ? b.az.toFixed(1) + "° " + cardinal(b.az) + " · alt " + b.alt.toFixed(1) + "°" : "waiting for GPS…");
+      var flag = t.earth ? "" :
+        (b ? (b.alt > 0 ? '<span class="tflag up">UP</span>' : '<span class="tflag down">below</span>') : "");
+      html += '<button class="trow' + (t.dash ? "" : " nodash") + '" data-target="' + t.name + '">' +
+        '<span class="tglyph">' + t.glyph + '</span><span class="tname">' + t.name + '</span>' +
+        '<span class="tazalt">' + azalt + '</span>' + flag +
+        '<span class="t3d">3D</span></button>';
+    });
+    els.targetsBody.innerHTML = html;
+  }
+
+  els.targetsBody.addEventListener("click", function (ev) {
+    var row = ev.target.closest(".trow");
+    if (!row) return;
+    var name = row.getAttribute("data-target");
+    var t = null;
+    TARGETS.forEach(function (x) { if (x.name === name) t = x; });
+    if (!t) return;
+    els.targetsPanel.style.display = "none";
+    els.btnTargets.classList.remove("on");
+    if (t.dash && window.RE_openDashboard) {
+      window.RE_openDashboard(name);
+    } else {
+      highlight = { name: name, until: Date.now() + 6000 }; // pulse it in the AR view
+    }
+  });
 
   // ---- math helpers ----
   var D2R = Math.PI / 180;
@@ -493,6 +587,7 @@
       return { name: b.name, glyph: b.glyph, color: b.color, az: hor.azimuth, alt: hor.altitude };
     });
     renderTable();
+    renderTargets();
   }
 
   function renderTable() {
@@ -601,45 +696,59 @@
     var cam = makeCamera(w, h);
     var margin = 60, i, o, p;
 
-    // constellation lines (dim, under everything)
+    /* constellation lines (dim, under everything). Horizon-consistent since
+       H05: segments with BOTH endpoints below the horizon are culled unless
+       the Below toggle is on, in which case they draw extra-dim. Segments
+       crossing the horizon always draw (matches star-dot behavior closely
+       enough without clipping math). */
     if (cam && layers.lines && lineDb && lineDb.ready) {
-      ctx.strokeStyle = "rgba(110,168,255,0.35)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
       var e = lineDb.enu;
-      for (var pl = 0; pl < lineDb.polys.length; pl++) {
-        var start = lineDb.polys[pl][0], len = lineDb.polys[pl][1];
-        var prevOk = false;
-        for (i = 0; i < len; i++) {
-          o = (start + i) * 3;
-          var ok = projectVec(cam, e[o], e[o + 1], e[o + 2], _pa);
-          if (ok && prevOk &&
-              !((_pa.x < -margin && _pb.x < -margin) || (_pa.x > w + margin && _pb.x > w + margin) ||
-                (_pa.y < -margin && _pb.y < -margin) || (_pa.y > h + margin && _pb.y > h + margin))) {
-            ctx.moveTo(_pb.x, _pb.y); ctx.lineTo(_pa.x, _pa.y);
+      var passes = layers.below ? ["up", "below"] : ["up"];
+      passes.forEach(function (mode) {
+        ctx.strokeStyle = mode === "up" ? "rgba(110,168,255,0.35)" : "rgba(110,168,255,0.13)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (var pl = 0; pl < lineDb.polys.length; pl++) {
+          var start = lineDb.polys[pl][0], len = lineDb.polys[pl][1];
+          var prevOk = false, prevBelow = false;
+          for (i = 0; i < len; i++) {
+            o = (start + i) * 3;
+            var below = e[o + 2] <= STAR_MIN_UP;
+            var ok = projectVec(cam, e[o], e[o + 1], e[o + 2], _pa);
+            var bothBelow = below && prevBelow;
+            var wanted = mode === "up" ? !bothBelow : bothBelow;
+            if (ok && prevOk && wanted &&
+                !((_pa.x < -margin && _pb.x < -margin) || (_pa.x > w + margin && _pb.x > w + margin) ||
+                  (_pa.y < -margin && _pb.y < -margin) || (_pa.y > h + margin && _pb.y > h + margin))) {
+              ctx.moveTo(_pb.x, _pb.y); ctx.lineTo(_pa.x, _pa.y);
+            }
+            prevOk = ok; prevBelow = below;
+            _pb.x = _pa.x; _pb.y = _pa.y;
           }
-          prevOk = ok;
-          _pb.x = _pa.x; _pb.y = _pa.y;
         }
-      }
-      ctx.stroke();
+        ctx.stroke();
+      });
     }
 
-    // star dots (single path + single fill; radius scaled by magnitude)
+    // star dots (one batched fill per pass; radius scaled by magnitude;
+    // second dim pass for below-horizon stars when the Below toggle is on)
     if (cam && layers.stars && starDb && starDb.ready) {
-      ctx.fillStyle = "#eef2ff";
-      ctx.beginPath();
       var se = starDb.enu, sm = starDb.mag;
-      for (i = 0; i < starDb.n; i++) {
-        o = i * 3;
-        if (se[o + 2] <= STAR_MIN_UP) continue; // below horizon
-        if (!projectVec(cam, se[o], se[o + 1], se[o + 2], _pa)) continue;
-        if (_pa.x < -10 || _pa.x > w + 10 || _pa.y < -10 || _pa.y > h + 10) continue;
-        var r = starRadius(sm[i]);
-        ctx.moveTo(_pa.x + r, _pa.y);
-        ctx.arc(_pa.x, _pa.y, r, 0, Math.PI * 2);
-      }
-      ctx.fill();
+      var starPasses = layers.below ? [false, true] : [false];
+      starPasses.forEach(function (wantBelow) {
+        ctx.fillStyle = wantBelow ? "rgba(238,242,255,0.28)" : "#eef2ff";
+        ctx.beginPath();
+        for (i = 0; i < starDb.n; i++) {
+          o = i * 3;
+          if ((se[o + 2] <= STAR_MIN_UP) !== wantBelow) continue;
+          if (!projectVec(cam, se[o], se[o + 1], se[o + 2], _pa)) continue;
+          if (_pa.x < -10 || _pa.x > w + 10 || _pa.y < -10 || _pa.y > h + 10) continue;
+          var r = starRadius(sm[i]);
+          ctx.moveTo(_pa.x + r, _pa.y);
+          ctx.arc(_pa.x, _pa.y, r, 0, Math.PI * 2);
+        }
+        ctx.fill();
+      });
     }
 
     // star names (named + bright only, to avoid clutter; independent of dots)
@@ -650,23 +759,30 @@
       for (i = 0; i < starDb.labels.length; i++) {
         var L = starDb.labels[i];
         o = L.i * 3;
-        if (sne[o + 2] <= STAR_MIN_UP) continue;
+        var nameBelow = sne[o + 2] <= STAR_MIN_UP;
+        if (nameBelow && !layers.below) continue;
         if (!projectVec(cam, sne[o], sne[o + 1], sne[o + 2], _pa)) continue;
         if (_pa.x < 0 || _pa.x > w || _pa.y < 0 || _pa.y > h) continue;
+        if (nameBelow) ctx.globalAlpha = 0.35;
         ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,0.75)";
         ctx.fillStyle = "#cfe0ff";
         ctx.strokeText(L.name, _pa.x + 8, _pa.y - 6);
         ctx.fillText(L.name, _pa.x + 8, _pa.y - 6);
+        if (nameBelow) ctx.globalAlpha = 1;
       }
     }
 
-    // planet/Sun/Moon labels (on top of stars)
+    // planet/Sun/Moon labels (on top of stars); below-horizon ones draw
+    // dimmed when the Below toggle is on, and stay tappable
     ctx.font = "600 14px -apple-system, sans-serif";
     ctx.textAlign = "left";
+    var nowMs = Date.now();
     eph.forEach(function (b) {
-      if (b.alt <= 0) return;
+      var pBelow = b.alt <= 0;
+      if (pBelow && !layers.below) return;
       var p = project(b.az, b.alt, w, h);
       if (!p || p.x < -40 || p.x > w + 40 || p.y < -40 || p.y > h + 40) return;
+      if (pBelow) ctx.globalAlpha = 0.35;
       ctx.fillStyle = b.color;
       ctx.strokeStyle = "rgba(0,0,0,0.7)";
       ctx.lineWidth = 3;
@@ -674,10 +790,18 @@
       ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2); ctx.stroke();
       ctx.strokeStyle = b.color; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2); ctx.stroke();
-      var label = b.glyph + " " + b.name;
+      var label = b.glyph + " " + b.name + (pBelow ? " ↓" : "");
       ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,0.75)";
       ctx.strokeText(label, p.x + 14, p.y + 5);
       ctx.fillText(label, p.x + 14, p.y + 5);
+      if (pBelow) ctx.globalAlpha = 1;
+      // Targets-picker highlight: pulsing ring for a few seconds
+      if (highlight.name === b.name && nowMs < highlight.until) {
+        var pr = 16 + 5 * Math.sin(nowMs / 140);
+        ctx.strokeStyle = "rgba(255,204,92,0.9)";
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(p.x, p.y, pr, 0, Math.PI * 2); ctx.stroke();
+      }
     });
 
     // center reticle (always on top)
@@ -714,7 +838,8 @@
     els.splash.style.display = "none";
     els.topbar.style.display = "flex";
     els.botbar.style.display = "flex";
-    bindToggle(els.btnData, els.dataPanel, true);   // Step A table visible first
+    bindToggle(els.btnData, els.dataPanel, true, [[els.btnTargets, els.targetsPanel]]);
+    bindToggle(els.btnTargets, els.targetsPanel, false, [[els.btnData, els.dataPanel]]);
     bindToggle(els.btnTune, els.tunePanel, false);
     startOrientation(); // must be inside the user gesture (iOS 13+)
     startCamera();      // ditto
@@ -734,7 +859,8 @@
     var w = window.innerWidth, h = window.innerHeight;
     var best = null, bd = TAP_RADIUS_PX;
     eph.forEach(function (b) {
-      if (!DASH_PLANETS[b.name] || b.alt <= 0) return;
+      if (!DASH_PLANETS[b.name]) return;
+      if (b.alt <= 0 && !layers.below) return; // below-horizon tappable only in Below mode
       var p = project(b.az, b.alt, w, h);
       if (!p) return;
       var d = Math.hypot(p.x - ev.clientX, p.y - ev.clientY);
