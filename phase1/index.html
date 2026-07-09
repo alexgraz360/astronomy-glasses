@@ -105,11 +105,19 @@
   }
   #tuneReset { width: 100%; margin-top: 8px; padding: 8px; border-radius: 9px; border: 1px solid var(--line); background: #141a2e; color: var(--muted); font-size: 12px; }
 
-  /* Bottom bar: where the camera is pointing */
+  /* Bottom bar: planet dashboard chips + where the camera is pointing */
   #botbar {
     position: fixed; bottom: env(safe-area-inset-bottom, 0); left: 0; right: 0; z-index: 20;
-    display: flex; justify-content: center; padding: 8px 10px 12px;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    padding: 8px 10px 12px;
   }
+  #chips { display: flex; gap: 12px; }
+  .pchip {
+    width: 44px; height: 44px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); font-size: 20px; line-height: 1;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  .pchip:active { transform: translateY(1px); border-color: var(--accent); }
   #pointing {
     background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
     padding: 6px 16px; font-size: 13px; font-weight: 600;
@@ -156,6 +164,12 @@
 </div>
 
 <div id="botbar" style="display:none;">
+  <div id="chips">
+    <button class="pchip" data-planet="Saturn" aria-label="Saturn dashboard">&#x2644;</button>
+    <button class="pchip" data-planet="Jupiter" aria-label="Jupiter dashboard">&#x2643;</button>
+    <button class="pchip" data-planet="Earth" aria-label="Earth dashboard">&#x2295;</button>
+    <button class="pchip" data-planet="Mars" aria-label="Mars dashboard">&#x2642;</button>
+  </div>
   <span id="pointing">az &mdash; &middot; alt &mdash;</span>
 </div>
 
@@ -165,6 +179,7 @@
   <button id="startBtn" class="startbtn">Start</button>
 </div>
 
+<script type="importmap">{ "imports": { "three": "./lib/three.module.js" } }</script>
 <script src="lib/astronomy.browser.js"></script>
 <script>
 (function () {
@@ -242,6 +257,7 @@
   var eph = [];                   // [{name, glyph, color, az, alt}]
   var view = { az: null, alt: null };  // smoothed device view direction
   var started = false;
+  var arPaused = false; // true while a 3D planet dashboard is open (Handoff 04)
 
   var els = {};
   ["cam","sky","splash","startBtn","topbar","botbar","dataPanel","tunePanel",
@@ -460,7 +476,7 @@
   }
 
   function starTick() {
-    if (!observer || !starDb) return;
+    if (!observer || !starDb || arPaused) return;
     var rot = Astronomy.Rotation_EQJ_HOR(Astronomy.MakeTime(new Date()), observer);
     rotateToENU(starVecJ2000, starDb.enu, starDb.n, rot.rot);
     starDb.ready = true;
@@ -469,7 +485,7 @@
 
   // ---- ephemeris (Step A) ----
   function computeEphemeris() {
-    if (!observer) return;
+    if (!observer || arPaused) return;
     var time = Astronomy.MakeTime(new Date());
     eph = BODIES.map(function (b) {
       var eq = Astronomy.Equator(b.name, time, observer, true, true); // of-date equator, aberration
@@ -577,6 +593,7 @@
   }
 
   function drawFrame() {
+    if (arPaused) return; // dashboard covers the AR view; skip all draw work
     var w = window.innerWidth, h = window.innerHeight;
     ctx.clearRect(0, 0, w, h);
     if (!started) return;
@@ -706,6 +723,40 @@
     setInterval(starTick, STAR_TICK_MS);
   });
 
+  // ---- tap-to-simulate entry points (Handoff 04) ----
+  // Tapping a labeled planet in the AR view opens its 3D dashboard. Earth
+  // isn't in the sky, so the chip row also gives direct access to all four
+  // (useful in daytime or when a planet is below the horizon).
+  var DASH_PLANETS = { Saturn: 1, Jupiter: 1, Mars: 1 };
+  var TAP_RADIUS_PX = 44;
+  els.sky.addEventListener("click", function (ev) {
+    if (!started || arPaused || !window.RE_openDashboard) return;
+    var w = window.innerWidth, h = window.innerHeight;
+    var best = null, bd = TAP_RADIUS_PX;
+    eph.forEach(function (b) {
+      if (!DASH_PLANETS[b.name] || b.alt <= 0) return;
+      var p = project(b.az, b.alt, w, h);
+      if (!p) return;
+      var d = Math.hypot(p.x - ev.clientX, p.y - ev.clientY);
+      if (d < bd) { bd = d; best = b.name; }
+    });
+    if (best) window.RE_openDashboard(best);
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".pchip"), function (btn) {
+    btn.addEventListener("click", function () {
+      if (window.RE_openDashboard) window.RE_openDashboard(btn.getAttribute("data-planet"));
+    });
+  });
+
+  function setARPaused(p) {
+    arPaused = p;
+    // pause the camera video to save battery/heat while the dashboard is open
+    if (els.cam.srcObject) {
+      if (p) { els.cam.pause(); }
+      else { var pr = els.cam.play(); if (pr && pr.catch) pr.catch(function () {}); }
+    }
+  }
+
   // ---- desktop debug hooks (no effect on device usage) ----
   window.RE = {
     debugSetLocation: function (lat, lon, elev) {
@@ -727,9 +778,31 @@
                polylines: lineDb ? lineDb.polys.length : 0 };
     },
     layers: layers,
-    tune: tune
+    tune: tune,
+    setARPaused: setARPaused,
+    getObserver: function () { return observer; },
+    isARPaused: function () { return arPaused; }
   };
 })();
+</script>
+<script type="module">
+/* Dashboard bootstrap (Handoff 04): three.js + the dashboard module load
+   lazily on first open, so the AR page stays light. */
+window.RE_openDashboard = async function (name) {
+  try {
+    RE.setARPaused(true);
+    const mod = await import("./dashboard/planet-dashboard.js");
+    window.RE_closeDashboard = mod.closeDashboard;
+    window.RE_dashDebug = mod._debug;
+    mod.openDashboard(name, {
+      observer: RE.getObserver(),
+      onClose: function () { RE.setARPaused(false); }
+    });
+  } catch (e) {
+    console.error("dashboard failed", e);
+    RE.setARPaused(false);
+  }
+};
 </script>
 </body>
 </html>
