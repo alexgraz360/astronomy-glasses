@@ -87,6 +87,36 @@ var PLANETS = {
     desc: "Home, lit exactly as it is right now — the day/night terminator, city lights and season match the displayed time. Starts over your GPS position.",
     stats: { "Radius (equatorial)": "6,378 km", "Mass": "5.97 × 10²⁴ kg", "Day length": "23.93 h", "Axial tilt": "23.44°", "Known moons": "1" }
   },
+  Mercury: {
+    glyph: "☿", radiusKm: 2440, flat: 1.0, camDist: 3.4,
+    map: "2k_mercury.jpg",
+    moons: [],
+    desc: "The innermost planet: a cratered, airless world. Its 3:2 spin–orbit resonance means one solar day lasts about two Mercury years (~176 Earth days). Its phase follows the app clock.",
+    stats: { "Radius": "2,440 km", "Mass": "3.30 × 10²³ kg", "Rotation (sidereal)": "58.65 d (3:2 resonance)", "Solar day": "~176 d", "Axial tilt": "0.03°", "Known moons": "0" }
+  },
+  Venus: {
+    glyph: "♀", radiusKm: 6052, flat: 1.0, camDist: 3.4,
+    map: "2k_venus_atmosphere.jpg",
+    atmosphere: { color: [0.95, 0.88, 0.70], strength: 0.5 },
+    moons: [],
+    desc: "You are seeing Venus's cloud tops — the solid surface is permanently hidden beneath its dense CO₂ atmosphere. It rotates retrograde, so slowly that its day (243 d) outlasts its year (225 d). Venus shows dramatic phases: scrub Time Travel to watch them.",
+    stats: { "Radius": "6,052 km", "Mass": "4.87 × 10²⁴ kg", "Rotation (sidereal)": "243 d, retrograde", "Axial tilt": "177.4°", "Known moons": "0" }
+  },
+  Moon: {
+    glyph: "☾", radiusKm: 1737, flat: 1.0, camDist: 3.2,
+    map: "2k_moon.jpg",
+    moons: [],
+    desc: "Earth's Moon at its current phase. The terminator and the slight wobble of the visible face (optical libration, approximate — mean IAU rotation) follow the app clock: scrub Time Travel to watch it wax, wane, and nod.",
+    stats: { "Radius": "1,737 km", "Mass": "7.35 × 10²² kg", "Rotation": "27.32 d (synchronous)", "Axial tilt": "6.68° (to ecliptic)" }
+  },
+  Sun: {
+    glyph: "☉", radiusKm: 695700, flat: 1.0, camDist: 3.0,
+    map: "2k_sun.jpg", unlit: true, limbDarken: 0.35,
+    atmosphere: { color: [1.0, 0.72, 0.35], strength: 0.85 },
+    moons: [],
+    desc: "Our star, rotating once every ~25 days at its equator. ⚠ Never look at the real Sun with the naked eye or unfiltered optics — this rendering is safe; the real sky is not.",
+    stats: { "Radius": "695,700 km", "Mass": "1.99 × 10³⁰ kg", "Rotation (equator)": "~25.4 d", "Surface temp": "5,772 K", "Spectral type": "G2V" }
+  },
   Mars: {
     glyph: "♂", radiusKm: 3396, flat: 0.9941, camDist: 3.4,
     map: "2k_mars.jpg",
@@ -263,8 +293,17 @@ function bodyOrientation(body, time) {
 }
 
 function sunDirOf(body, time) {
+  // The Sun is self-luminous: its heliocentric vector is ~0 (normalize would
+  // NaN). Its material is unlit (ambient=1) so this placeholder is unused.
+  if (body === "Sun") return new THREE.Vector3(0, 1, 0);
   var hv = A.HelioVector(body, time);
   return toScene({ x: -hv.x, y: -hv.y, z: -hv.z }).normalize();
+}
+
+function moonPhaseName(angleDeg) { // 0=new, 90=first quarter, 180=full, 270=last
+  var names = ["New Moon", "Waxing Crescent", "First Quarter", "Waxing Gibbous",
+               "Full Moon", "Waning Gibbous", "Last Quarter", "Waning Crescent"];
+  return names[Math.round(angleDeg / 45) % 8];
 }
 
 function earthDirOf(body, time) { // planet -> Earth (scene)
@@ -582,7 +621,8 @@ Dashboard.prototype.buildScene = function (tex) {
   if (cfg.nightMap) defines.HAS_NIGHT = 1;
   if (cfg.rings) defines.HAS_RINGSHADOW = 1;
   var uniforms = {
-    map: { value: tex.map }, sunDir: this.sunDirU, ambient: { value: 0.045 },
+    map: { value: tex.map }, sunDir: this.sunDirU,
+    ambient: { value: cfg.unlit ? 1.0 : 0.045 }, // unlit = self-luminous (Sun)
     limbDarken: { value: cfg.limbDarken || 0.0 }, tint: { value: new THREE.Vector3(1, 1, 1) }
   };
   if (cfg.nightMap) uniforms.nightMap = { value: tex.night };
@@ -728,21 +768,31 @@ Dashboard.prototype.updateStats = function () {
   var time = this.time(), name = this.name, cfg = this.cfg;
   var rows = [];
   Object.keys(cfg.stats).forEach(function (k) { rows.push([k, cfg.stats[k]]); });
+  var dEKm = 0;
   if (name !== "Earth") {
     var gv = A.GeoVector(name, time, true);
     var dE = Math.hypot(gv.x, gv.y, gv.z);
-    rows.push(["Distance from Earth", fmt(dE * AU_KM) + " km (" + dE.toFixed(3) + " AU)"]);
-    rows.push(["Light travel time", (dE * AU_KM / 299792.458 / 60).toFixed(1) + " min"]);
+    dEKm = dE * AU_KM;
+    rows.push(["Distance from Earth", fmt(dEKm) + " km (" + dE.toFixed(3) + " AU)"]);
+    var lightSec = dEKm / 299792.458;
+    rows.push(["Light travel time", lightSec < 60 ? lightSec.toFixed(1) + " s" : (lightSec / 60).toFixed(1) + " min"]);
+    rows.push(["Angular size", (2 * Math.atan(cfg.radiusKm / dEKm) * R2D * 60).toFixed(1) + "′"]);
   }
-  var hv = A.HelioVector(name, time);
-  var dS = Math.hypot(hv.x, hv.y, hv.z);
-  rows.push(["Distance from Sun", fmt(dS * AU_KM) + " km (" + dS.toFixed(3) + " AU)"]);
-  if (name !== "Earth") {
-    rows.push(["Illuminated", (A.Illumination(name, time).phase_fraction * 100).toFixed(1) + "%"]);
-  } else {
+  if (name !== "Sun") {
+    var hv = A.HelioVector(name, time);
+    var dS = Math.hypot(hv.x, hv.y, hv.z);
+    rows.push(["Distance from Sun", fmt(dS * AU_KM) + " km (" + dS.toFixed(3) + " AU)"]);
+  }
+  if (name === "Moon") {
+    var ph = A.MoonPhase(time);
+    rows.push(["Phase", moonPhaseName(ph) + " (" + ph.toFixed(0) + "°)"]);
+    rows.push(["Illuminated", (A.Illumination("Moon", time).phase_fraction * 100).toFixed(1) + "%"]);
+  } else if (name === "Earth") {
     var gm = A.GeoMoon(time);
     rows.push(["Moon distance", fmt(Math.hypot(gm.x, gm.y, gm.z) * AU_KM) + " km"]);
     rows.push(["Moon illuminated", (A.Illumination("Moon", time).phase_fraction * 100).toFixed(1) + "%"]);
+  } else if (name !== "Sun") {
+    rows.push(["Illuminated", (A.Illumination(name, time).phase_fraction * 100).toFixed(1) + "%"]);
   }
   var moonNote = "";
   if (this.moons.length) {

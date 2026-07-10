@@ -73,24 +73,60 @@ function slerpDir(a, b, t) {
 
 /* Curated deep-sky set. ra (hours, J2000), dec (deg), sizeArcmin = real
    angular size (largest dimension). Files under textures/dso/, 1K, from
-   Wikimedia Commons — credits recorded here and in textures/dso/README.md. */
+   Wikimedia Commons — credits recorded here and in textures/dso/README.md.
+   H09 detail-card facts (type/con/distLy/mag/desc) sourced from the SEDS
+   Messier database, NASA object pages, and Wikipedia infoboxes (src field);
+   distances rounded to commonly cited values, not invented. */
+var DSO_SRC = "NASA / SEDS Messier database / Wikipedia";
 var DSOS = [
-  { id: "m42",   name: "Orion Nebula (M42)",      ra: 5.5903,  dec: -5.45,   sizeArcmin: 65,  credit: "NASA/ESA/M. Robberto (STScI) — Public domain" },
-  { id: "m31",   name: "Andromeda Galaxy (M31)",  ra: 0.7123,  dec: 41.269,  sizeArcmin: 178, credit: "Adam Evans — CC BY 2.0" },
-  { id: "m45",   name: "Pleiades (M45)",          ra: 3.7833,  dec: 24.117,  sizeArcmin: 110, credit: "NASA/ESA/AURA/Caltech — Public domain" },
-  { id: "m51",   name: "Whirlpool Galaxy (M51)",  ra: 13.498,  dec: 47.195,  sizeArcmin: 11,  credit: "NASA/ESA — Public domain" },
-  { id: "m57",   name: "Ring Nebula (M57)",       ra: 18.8933, dec: 33.033,  sizeArcmin: 1.4, credit: "Hubble Heritage (AURA/STScI/NASA) — Public domain" },
-  { id: "m16",   name: "Eagle Nebula (M16)",      ra: 18.3133, dec: -13.783, sizeArcmin: 30,  credit: "ESO — CC BY 4.0" },
-  { id: "m104",  name: "Sombrero Galaxy (M104)",  ra: 12.6667, dec: -11.617, sizeArcmin: 9,   credit: "NASA/ESA/Hubble Heritage — Public domain" },
-  { id: "m8",    name: "Lagoon Nebula (M8)",      ra: 18.0633, dec: -24.383, sizeArcmin: 90,  credit: "ESO/VPHAS+ team — CC BY 4.0" },
-  { id: "m20",   name: "Trifid Nebula (M20)",     ra: 18.0383, dec: -23.033, sizeArcmin: 28,  credit: "Public domain (via Wikimedia Commons)" },
-  { id: "m33",   name: "Triangulum Galaxy (M33)", ra: 1.5639,  dec: 30.66,   sizeArcmin: 71,  credit: "ESO — CC BY 4.0" },
-  { id: "helix", name: "Helix Nebula (NGC 7293)", ra: 22.4933, dec: -20.837, sizeArcmin: 25,  credit: "NASA/ESA/C.R. O'Dell (Vanderbilt) — Public domain" },
-  { id: "m1",    name: "Crab Nebula (M1)",        ra: 5.575,   dec: 22.017,  sizeArcmin: 7,   credit: "NASA/ESA/J. Hester & A. Loll (ASU) — Public domain" },
-  { id: "m13",   name: "Hercules Cluster (M13)",  ra: 16.695,  dec: 36.467,  sizeArcmin: 20,  credit: "Sid Leach/Adam Block/Mt. Lemmon SkyCenter — CC BY-SA 4.0" },
-  { id: "m27",   name: "Dumbbell Nebula (M27)",   ra: 19.9933, dec: 22.717,  sizeArcmin: 8,   credit: "ESO — CC BY 4.0" },
-  { id: "carina",name: "Carina Nebula",           ra: 10.7517, dec: -59.867, sizeArcmin: 120, credit: "ESO — CC BY 4.0" },
-  { id: "m17",   name: "Omega Nebula (M17)",      ra: 18.3467, dec: -16.183, sizeArcmin: 11,  credit: "NASA/ESA/J. Hester (ASU) — Public domain" }
+  { id: "m42",   name: "Orion Nebula (M42)",      ra: 5.5903,  dec: -5.45,   sizeArcmin: 65,  credit: "NASA/ESA/M. Robberto (STScI) — Public domain",
+    type: "Emission nebula (H II region)", con: "Orion", distLy: "~1,300 ly", mag: 4.0, src: DSO_SRC,
+    desc: "The nearest massive star-forming region to Earth, visible to the naked eye as the middle 'star' of Orion's Sword. The young Trapezium cluster at its heart lights up the surrounding gas." },
+  { id: "m31",   name: "Andromeda Galaxy (M31)",  ra: 0.7123,  dec: 41.269,  sizeArcmin: 178, credit: "Adam Evans — CC BY 2.0",
+    type: "Spiral galaxy", con: "Andromeda", distLy: "~2.5 million ly", mag: 3.4, src: DSO_SRC,
+    desc: "The nearest large galaxy and the biggest member of our Local Group, holding roughly a trillion stars. It is approaching the Milky Way and the two will merge in about 4–5 billion years." },
+  { id: "m45",   name: "Pleiades (M45)",          ra: 3.7833,  dec: 24.117,  sizeArcmin: 110, credit: "NASA/ESA/AURA/Caltech — Public domain",
+    type: "Open star cluster", con: "Taurus", distLy: "~440 ly", mag: 1.6, src: DSO_SRC,
+    desc: "The Seven Sisters: a young cluster of hot blue stars about 100 million years old, currently drifting through a dusty cloud that reflects their light. One of the closest clusters to Earth." },
+  { id: "m51",   name: "Whirlpool Galaxy (M51)",  ra: 13.498,  dec: 47.195,  sizeArcmin: 11,  credit: "NASA/ESA — Public domain",
+    type: "Spiral galaxy", con: "Canes Venatici", distLy: "~23 million ly", mag: 8.4, src: DSO_SRC,
+    desc: "The first galaxy in which spiral structure was recognized (Lord Rosse, 1845). It is gravitationally interacting with its small yellow companion, NGC 5195, which distorts its arms." },
+  { id: "m57",   name: "Ring Nebula (M57)",       ra: 18.8933, dec: 33.033,  sizeArcmin: 1.4, credit: "Hubble Heritage (AURA/STScI/NASA) — Public domain",
+    type: "Planetary nebula", con: "Lyra", distLy: "~2,300 ly", mag: 8.8, src: DSO_SRC,
+    desc: "A glowing shell of gas cast off by a dying Sun-like star. The faint white dwarf left behind sits at its center — a preview of our own Sun's fate in several billion years." },
+  { id: "m16",   name: "Eagle Nebula (M16)",      ra: 18.3133, dec: -13.783, sizeArcmin: 30,  credit: "ESO — CC BY 4.0",
+    type: "Emission nebula + open cluster", con: "Serpens", distLy: "~7,000 ly", mag: 6.0, src: DSO_SRC,
+    desc: "A young star factory made famous by Hubble's 'Pillars of Creation' — towering columns of cold gas and dust being sculpted and evaporated by the radiation of newborn stars." },
+  { id: "m104",  name: "Sombrero Galaxy (M104)",  ra: 12.6667, dec: -11.617, sizeArcmin: 9,   credit: "NASA/ESA/Hubble Heritage — Public domain",
+    type: "Spiral galaxy (edge-on)", con: "Virgo", distLy: "~30 million ly", mag: 8.0, src: DSO_SRC,
+    desc: "A nearly edge-on spiral with a brilliant bulge and a dramatic dust lane, resembling a wide-brimmed hat. A supermassive black hole of about a billion solar masses sits at its core." },
+  { id: "m8",    name: "Lagoon Nebula (M8)",      ra: 18.0633, dec: -24.383, sizeArcmin: 90,  credit: "ESO/VPHAS+ team — CC BY 4.0",
+    type: "Emission nebula", con: "Sagittarius", distLy: "~4,100 ly", mag: 6.0, src: DSO_SRC,
+    desc: "A giant stellar nursery toward the galactic center, faintly visible to the naked eye from dark skies. Its bright core region is nicknamed the Hourglass Nebula." },
+  { id: "m20",   name: "Trifid Nebula (M20)",     ra: 18.0383, dec: -23.033, sizeArcmin: 28,  credit: "Public domain (via Wikimedia Commons)",
+    type: "Emission + reflection nebula", con: "Sagittarius", distLy: "~5,200 ly", mag: 6.3, src: DSO_SRC,
+    desc: "A rare three-in-one: red glowing hydrogen, blue starlight-reflecting dust, and dark lanes that split it into the three lobes that give it its name." },
+  { id: "m33",   name: "Triangulum Galaxy (M33)", ra: 1.5639,  dec: 30.66,   sizeArcmin: 71,  credit: "ESO — CC BY 4.0",
+    type: "Spiral galaxy", con: "Triangulum", distLy: "~2.7 million ly", mag: 5.7, src: DSO_SRC,
+    desc: "The third-largest galaxy of the Local Group after Andromeda and the Milky Way, seen nearly face-on. Under exceptionally dark skies it is one of the most distant objects visible to the naked eye." },
+  { id: "helix", name: "Helix Nebula (NGC 7293)", ra: 22.4933, dec: -20.837, sizeArcmin: 25,  credit: "NASA/ESA/C.R. O'Dell (Vanderbilt) — Public domain",
+    type: "Planetary nebula", con: "Aquarius", distLy: "~650 ly", mag: 7.6, src: DSO_SRC,
+    desc: "One of the closest planetary nebulae to Earth, nicknamed the 'Eye of God' — the cast-off outer atmosphere of a Sun-like star, spanning about a light-year." },
+  { id: "m1",    name: "Crab Nebula (M1)",        ra: 5.575,   dec: 22.017,  sizeArcmin: 7,   credit: "NASA/ESA/J. Hester & A. Loll (ASU) — Public domain",
+    type: "Supernova remnant", con: "Taurus", distLy: "~6,500 ly", mag: 8.4, src: DSO_SRC,
+    desc: "The wreckage of a supernova that Chinese astronomers recorded in 1054 AD, bright enough then to be seen in daylight. A pulsar spinning about 30 times per second powers its glow." },
+  { id: "m13",   name: "Hercules Cluster (M13)",  ra: 16.695,  dec: 36.467,  sizeArcmin: 20,  credit: "Sid Leach/Adam Block/Mt. Lemmon SkyCenter — CC BY-SA 4.0",
+    type: "Globular cluster", con: "Hercules", distLy: "~23,000 ly", mag: 5.8, src: DSO_SRC,
+    desc: "A spherical swarm of several hundred thousand ancient stars orbiting the Milky Way's halo. In 1974 it was the target of the Arecibo radio message to hypothetical extraterrestrials." },
+  { id: "m27",   name: "Dumbbell Nebula (M27)",   ra: 19.9933, dec: 22.717,  sizeArcmin: 8,   credit: "ESO — CC BY 4.0",
+    type: "Planetary nebula", con: "Vulpecula", distLy: "~1,300 ly", mag: 7.5, src: DSO_SRC,
+    desc: "The first planetary nebula ever discovered (Charles Messier, 1764) and one of the easiest to spot in small telescopes — an expanding double-lobed shell of gas from a dying star." },
+  { id: "carina",name: "Carina Nebula",           ra: 10.7517, dec: -59.867, sizeArcmin: 120, credit: "ESO — CC BY 4.0",
+    type: "Emission nebula", con: "Carina", distLy: "~7,500 ly", mag: 1.0, src: DSO_SRC,
+    desc: "One of the largest star-forming regions in the galaxy — bigger and brighter than Orion, though only visible from southern skies. Home to Eta Carinae, an unstable supergiant that may go supernova." },
+  { id: "m17",   name: "Omega Nebula (M17)",      ra: 18.3467, dec: -16.183, sizeArcmin: 11,  credit: "NASA/ESA/J. Hester (ASU) — Public domain",
+    type: "Emission nebula", con: "Sagittarius", distLy: "~5,500 ly", mag: 6.0, src: DSO_SRC,
+    desc: "Also called the Swan Nebula for its checkmark shape, this is one of the most massive and luminous star-forming regions in the Milky Way." }
 ];
 
 var PLANET_SPRITES = [
@@ -365,7 +401,10 @@ SpaceMode.prototype.buildScene = function () {
       col[i * 3 + 1] = c[1] * (0.35 + 0.65 * lum);
       col[i * 3 + 2] = c[2] * (0.35 + 0.65 * lum);
       size[i] = Math.max(1.6, 8.5 - 1.15 * s[2]); // screen px from apparent mag
-      if (s[3] && s[2] <= 2.5) self.starLabels.push({ name: s[3], pos: p });
+      if (s[3] && s[2] <= 2.5) self.starLabels.push({
+        name: s[3], pos: p, mag: s[2], bayer: s[4] || "", con: s[5] || "",
+        distPc: s[6], bv: typeof s[7] === "number" ? s[7] : 0.5, spect: s[8] || ""
+      });
     }
     var g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
@@ -524,18 +563,104 @@ SpaceMode.prototype.applyCamera = function () {
 
 /* ------------------------------ selection ------------------------------ */
 
+/* H09 tap routing, strict priority so taps never collide:
+   1) planet sprites (44 px) -> fly-to + 3D dashboard
+   2) DSO billboards (projected apparent radius, min 34 px) -> detail card
+   3) labeled bright stars (36 px) -> star info card
+   Detail cards are view-only by design — no flying into nebulae/galaxies. */
 SpaceMode.prototype.tapSelect = function (e) {
+  if (window.RE_cardOpen && window.RE_cardOpen()) return; // a card has focus
   var p = e.changedTouches ? e.changedTouches[0] : e;
-  var best = null, bd = 48;
   var v = new THREE.Vector3(), w = window.innerWidth, h = window.innerHeight;
-  for (var name in this.planetPos) {
-    v.copy(this.planetPos[name]).project(this.camera);
-    if (v.z > 1) continue;
-    var sx = (v.x + 1) / 2 * w, sy = (1 - v.y) / 2 * h;
-    var d = Math.hypot(sx - p.clientX, sy - p.clientY);
+  var self = this;
+  function screenOf(pos) {
+    v.copy(pos).project(self.camera);
+    if (v.z > 1) return null;
+    return { x: (v.x + 1) / 2 * w, y: (1 - v.y) / 2 * h };
+  }
+  var name, sp, d;
+  // 1) planets
+  var best = null, bd = 44;
+  for (name in this.planetPos) {
+    sp = screenOf(this.planetPos[name]);
+    if (!sp) continue;
+    d = Math.hypot(sp.x - p.clientX, sp.y - p.clientY);
     if (d < bd) { bd = d; best = name; }
   }
-  if (best) this.selectPlanet(best);
+  if (best) { this.selectPlanet(best); return; }
+  // 2) DSO billboards (hit radius follows their apparent size on screen)
+  var bestDso = null; bd = 1e9;
+  var pxPerDeg = h / this.camera.fov;
+  for (var i = 0; i < this.dsoMeshes.length; i++) {
+    var dm = this.dsoMeshes[i];
+    if (!dm.mesh.visible) continue;
+    sp = screenOf(dm.pos);
+    if (!sp) continue;
+    var appDeg = Math.max(dm.cfg.sizeArcmin / 60, 1.6);
+    var hitR = Math.max(34, appDeg / 2 * pxPerDeg);
+    d = Math.hypot(sp.x - p.clientX, sp.y - p.clientY);
+    if (d < hitR && d < bd) { bd = d; bestDso = dm; }
+  }
+  if (bestDso) { this.showDsoCard(bestDso.cfg); return; }
+  // 3) labeled bright stars
+  if (this.starLabels) {
+    var bestStar = null; bd = 36;
+    for (var j = 0; j < this.starLabels.length; j++) {
+      sp = screenOf(this.starLabels[j].pos);
+      if (!sp) continue;
+      d = Math.hypot(sp.x - p.clientX, sp.y - p.clientY);
+      if (d < bd) { bd = d; bestStar = this.starLabels[j]; }
+    }
+    if (bestStar) { this.showStarCard(bestStar); return; }
+  }
+};
+
+SpaceMode.prototype.showDsoCard = function (c) {
+  if (!window.RE_showCard) return;
+  window.RE_showCard({
+    image: "textures/dso/" + c.id + ".jpg",
+    title: c.name,
+    subtitle: c.type + " · in " + c.con,
+    rows: [
+      ["Distance", c.distLy],
+      ["Apparent magnitude", c.mag.toFixed(1)],
+      ["Apparent size", c.sizeArcmin >= 60 ? (c.sizeArcmin / 60).toFixed(1) + "°" : c.sizeArcmin + "′"],
+      ["Position (J2000)", "RA " + c.ra.toFixed(2) + "h · Dec " + (c.dec > 0 ? "+" : "") + c.dec.toFixed(1) + "°"]
+    ],
+    desc: c.desc,
+    credit: "Image: " + c.credit + " · Facts: " + c.src
+  });
+};
+
+function starNote(s) {
+  var sp = s.spect || "";
+  var colorName = { O: "blazing blue", B: "hot blue-white", A: "blue-white",
+                    F: "yellow-white", G: "yellow, Sun-like", K: "orange", M: "cool red" }[sp[0]];
+  var lum = /III/.test(sp) ? "giant" : /IV/.test(sp) ? "subgiant" : /II/.test(sp) ? "bright giant" :
+            /I/.test(sp) ? "supergiant" : /V/.test(sp) ? "main-sequence star" : "star";
+  if (!colorName) return "Bright star from the HYG catalog.";
+  var out = s.name + " is a " + colorName + " " + lum;
+  if (s.distPc < 100000) out += ", about " + Math.round(s.distPc * 3.26156).toLocaleString("en-US") + " light-years away";
+  return out + ".";
+}
+
+SpaceMode.prototype.showStarCard = function (s) {
+  if (!window.RE_showCard) return;
+  var c = bvColor(s.bv);
+  var rgb = "rgb(" + c.map(function (x) { return Math.round(x * 255); }).join(",") + ")";
+  window.RE_showCard({
+    glyphColor: rgb,
+    title: s.name,
+    subtitle: (s.bayer ? s.bayer + " · " : "") + s.con,
+    rows: [
+      ["Spectral type", s.spect || "—"],
+      ["Distance", s.distPc >= 100000 ? "unknown" : (s.distPc * 3.26156).toFixed(1) + " ly"],
+      ["Apparent magnitude", s.mag.toFixed(2)],
+      ["Color index (B−V)", s.bv.toFixed(2)]
+    ],
+    desc: starNote(s),
+    credit: "Data: HYG database v4.1 (CC BY-SA 4.0)"
+  });
 };
 
 SpaceMode.prototype.setDragViewTo = function (d) {
@@ -545,7 +670,9 @@ SpaceMode.prototype.setDragViewTo = function (d) {
 
 SpaceMode.prototype.selectPlanet = function (name) {
   if (this.fly) return; // let the current transition finish first
-  var dash = { Saturn: 1, Jupiter: 1, Mars: 1, Earth: 1 }[name];
+  // H09: every body opens a dashboard now (the peek path is kept as a
+  // fallback for any future non-dashboard sprite)
+  var dash = { Saturn: 1, Jupiter: 1, Mars: 1, Earth: 1, Mercury: 1, Venus: 1, Sun: 1, Moon: 1 }[name];
   if (name === "Earth") { this.openDash("Earth"); return; } // Earth is underfoot: no fly-to
   var target = this.planetPos[name];
   if (!target) return;
@@ -763,6 +890,19 @@ export var _debug = {
     };
   },
   flyTo: function (name) { if (session) session.selectPlanet(name); },
+  openDso: function (id) {
+    if (!session) return false;
+    var m = session.dsoMeshes.filter(function (d) { return d.cfg.id === id; })[0];
+    if (m) session.showDsoCard(m.cfg);
+    return !!m;
+  },
+  openStar: function (name) {
+    if (!session || !session.starLabels) return false;
+    var s = session.starLabels.filter(function (x) { return x.name === name; })[0];
+    if (s) session.showStarCard(s);
+    return !!s;
+  },
+  tapAt: function (x, y) { if (session) session.tapSelect({ clientX: x, clientY: y }); },
   planetPos: function () {
     if (!session) return null;
     var out = {};

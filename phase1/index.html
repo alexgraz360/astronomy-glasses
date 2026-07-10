@@ -193,6 +193,35 @@
     color-scheme: dark;
   }
   .tbnote { color: var(--warn); font-size: 10px; text-align: center; }
+
+  /* Detail card (H09): one reusable view-only card for DSOs and stars.
+     z 38: above Space Mode (35) and time bar (36), below dashboards (40). */
+  #cardWrap {
+    position: fixed; inset: 0; z-index: 38; display: none;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.74); padding: 18px;
+  }
+  #card {
+    width: 100%; max-width: 430px; max-height: 88vh; overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background: #0d1120; border: 1px solid var(--line); border-radius: 16px;
+    padding: 14px 16px 16px;
+  }
+  #card img.cimg { width: 100%; max-height: 42vh; object-fit: contain; border-radius: 10px; background: #000; }
+  #card .cglyph { width: 74px; height: 74px; border-radius: 50%; margin: 14px auto 6px; box-shadow: 0 0 36px 12px; }
+  #card h3 { margin: 10px 0 2px; font-size: 18px; }
+  #card .csub { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  #card table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 6px 0; }
+  #card td { padding: 4px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  #card td:first-child { color: var(--muted); }
+  #card td:last-child { text-align: right; font-family: "SF Mono", ui-monospace, Menlo, monospace; }
+  #card .cdesc { font-size: 13px; line-height: 1.55; color: #c8d0e8; margin: 8px 0; }
+  #card .ccredit { font-size: 10px; color: #5c6480; line-height: 1.4; margin-top: 8px; }
+  #card .cback {
+    width: 100%; margin-top: 10px; padding: 11px; border-radius: 10px;
+    border: 1px solid var(--line); background: #141a2e; color: var(--accent);
+    font-size: 14px; font-weight: 700;
+  }
   #chips { display: flex; gap: 12px; }
   .pchip {
     width: 44px; height: 44px; border-radius: 999px; border: 1px solid var(--line);
@@ -262,6 +291,8 @@
   </div>
   <span id="pointing">az &mdash; &middot; alt &mdash;</span>
 </div>
+
+<div id="cardWrap"><div id="card"></div></div>
 
 <div id="timebar" style="display:none;">
   <div id="tbPanel" style="display:none;">
@@ -533,10 +564,10 @@ window.SimClock = (function () {
      live az/alt. Rows with a 3D dashboard open it directly regardless of
      horizon; other bodies get a short pulsing highlight in the AR view. */
   var TARGETS = [
-    { name: "Sun",     glyph: "☉" },
-    { name: "Moon",    glyph: "☾" },
-    { name: "Mercury", glyph: "☿" },
-    { name: "Venus",   glyph: "♀" },
+    { name: "Sun",     glyph: "☉", dash: true },
+    { name: "Moon",    glyph: "☾", dash: true },
+    { name: "Mercury", glyph: "☿", dash: true },
+    { name: "Venus",   glyph: "♀", dash: true },
     { name: "Mars",    glyph: "♂", dash: true },
     { name: "Jupiter", glyph: "♃", dash: true },
     { name: "Saturn",  glyph: "♄", dash: true },
@@ -578,6 +609,36 @@ window.SimClock = (function () {
       highlight = { name: name, until: Date.now() + 6000 }; // pulse it in the AR view
     }
   });
+
+  /* ---- reusable detail card (H09): DSOs + stars, view-only by design ----
+     spec: { image? , glyphColor?, title, subtitle?, rows?: [[k,v],...],
+             desc?, credit? }. Back button / backdrop tap dismisses. */
+  var cardWrap = document.getElementById("cardWrap");
+  var cardEl = document.getElementById("card");
+  function showCard(spec) {
+    var h = "";
+    if (spec.image) h += '<img class="cimg" src="' + spec.image + '" alt="">';
+    else if (spec.glyphColor) h += '<div class="cglyph" style="background:' + spec.glyphColor + ';color:' + spec.glyphColor + ';box-shadow:0 0 36px 12px ' + spec.glyphColor + ';"></div>';
+    h += "<h3>" + spec.title + "</h3>";
+    if (spec.subtitle) h += '<div class="csub">' + spec.subtitle + "</div>";
+    if (spec.rows && spec.rows.length) {
+      h += "<table>" + spec.rows.map(function (r) {
+        return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td></tr>";
+      }).join("") + "</table>";
+    }
+    if (spec.desc) h += '<div class="cdesc">' + spec.desc + "</div>";
+    if (spec.credit) h += '<div class="ccredit">' + spec.credit + "</div>";
+    h += '<button class="cback">← Back</button>';
+    cardEl.innerHTML = h;
+    cardEl.querySelector(".cback").addEventListener("click", closeCard);
+    cardWrap.style.display = "flex";
+    cardEl.scrollTop = 0;
+  }
+  function closeCard() { cardWrap.style.display = "none"; cardEl.innerHTML = ""; }
+  cardWrap.addEventListener("click", function (ev) { if (ev.target === cardWrap) closeCard(); });
+  window.RE_showCard = showCard;
+  window.RE_closeCard = closeCard;
+  window.RE_cardOpen = function () { return cardWrap.style.display !== "none"; };
 
   /* ---- time bar (H08): UI over SimClock, works in AR and Space modes ---- */
   var tb = {};
@@ -1125,7 +1186,8 @@ window.SimClock = (function () {
   // Tapping a labeled planet in the AR view opens its 3D dashboard. Earth
   // isn't in the sky, so the chip row also gives direct access to all four
   // (useful in daytime or when a planet is below the horizon).
-  var DASH_PLANETS = { Saturn: 1, Jupiter: 1, Mars: 1 };
+  // H09: every visible body has a dashboard now (Earth via picker/chips only)
+  var DASH_PLANETS = { Saturn: 1, Jupiter: 1, Mars: 1, Mercury: 1, Venus: 1, Sun: 1, Moon: 1 };
   var TAP_RADIUS_PX = 44;
   els.sky.addEventListener("click", function (ev) {
     if (!started || arPaused || !window.RE_openDashboard) return;

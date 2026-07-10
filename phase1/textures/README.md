@@ -14,7 +14,11 @@ Attribution also appears in-app (planet dashboard → Info panel).
 | 2k_earth_nightmap.jpg | 2048×1024 | Earth night city lights |
 | 2k_earth_clouds.jpg | 2048×1024 | Earth cloud layer |
 | 2k_mars.jpg | 2048×1024 | Mars globe (incl. polar caps) |
-| 1k_moon.jpg | 1024×512 | Earth's Moon; also tinted as a generic rocky surface for Galilean/Saturnian/Martian moons (real per-moon maps are a later handoff) |
+| 2k_mercury.jpg | 2048×1024 | Mercury globe (H09) |
+| 2k_venus_atmosphere.jpg | 2048×1024 | Venus cloud tops (H09; solid surface hidden by design) |
+| 2k_sun.jpg | 2048×1024 | Sun photosphere (H09, unlit/self-luminous shader) |
+| 2k_moon.jpg | 2048×1024 | Moon dashboard globe (H09) |
+| 1k_moon.jpg | 1024×512 | Earth's Moon in the Earth dashboard; also tinted as a generic rocky surface for Galilean/Saturnian/Martian moons (real per-moon maps are a later handoff) |
 
 The 1K moon map was downscaled locally from Solar System Scope's 2K original
 to meet the moon-texture resolution budget.
