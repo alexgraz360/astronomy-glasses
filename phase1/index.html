@@ -140,12 +140,59 @@
   }
   #tuneReset { width: 100%; margin-top: 8px; padding: 8px; border-radius: 9px; border: 1px solid var(--line); background: #141a2e; color: var(--muted); font-size: 12px; }
 
-  /* Bottom bar: planet dashboard chips + where the camera is pointing */
+  /* Bottom bar: planet dashboard chips + where the camera is pointing.
+     Sits above the H08 time bar. */
   #botbar {
-    position: fixed; bottom: env(safe-area-inset-bottom, 0); left: 0; right: 0; z-index: 20;
+    position: fixed; bottom: calc(env(safe-area-inset-bottom, 0px) + 42px); left: 0; right: 0; z-index: 20;
     display: flex; flex-direction: column; align-items: center; gap: 8px;
-    padding: 8px 10px 12px;
+    padding: 8px 10px 6px;
   }
+
+  /* Time bar (H08): collapsible, works over AR (z20) and Space Mode (z35) */
+  #timebar {
+    position: fixed; bottom: env(safe-area-inset-bottom, 0); left: 0; right: 0; z-index: 36;
+    display: flex; flex-direction: column; align-items: center; padding: 0 10px 8px;
+  }
+  #tbPill {
+    padding: 7px 16px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); font-size: 12px; font-weight: 600;
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  #tbPill .live { color: var(--good); font-weight: 700; }
+  #tbPill .sim { color: var(--warn); font-weight: 700; }
+  #tbPanel {
+    width: 100%; max-width: 420px; margin-bottom: 8px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 10px 12px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  .tbrow { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
+  .tbread { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tbbadge { font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 999px; }
+  .tbbadge.live { background: rgba(79,208,138,0.2); color: var(--good); }
+  .tbbadge.sim { background: rgba(255,204,92,0.2); color: var(--warn); }
+  .tbutc { color: var(--muted); font-size: 11px; font-family: "SF Mono", ui-monospace, Menlo, monospace; }
+  .tbbtn {
+    min-width: 40px; height: 36px; border-radius: 9px; border: 1px solid var(--line);
+    background: #141a2e; color: var(--text); font-size: 15px; font-weight: 700; padding: 0 10px;
+  }
+  .tbbtn.on { border-color: var(--accent); color: var(--accent); }
+  .tbbtn.tbnow { color: var(--good); border-color: rgba(79,208,138,0.5); }
+  .tbsel {
+    height: 36px; border-radius: 9px; border: 1px solid var(--line);
+    background: #141a2e; color: var(--text); font-size: 13px; padding: 0 6px;
+  }
+  .tbsteps button {
+    flex: 1; min-width: 0; height: 32px; border-radius: 8px; border: 1px solid var(--line);
+    background: #101627; color: var(--muted); font-size: 11px; font-weight: 700; padding: 0;
+  }
+  #tbScrub { width: 100%; accent-color: var(--accent); }
+  #tbJump {
+    flex: 1; height: 36px; border-radius: 9px; border: 1px solid var(--line);
+    background: #141a2e; color: var(--text); font-size: 13px; padding: 0 8px;
+    color-scheme: dark;
+  }
+  .tbnote { color: var(--warn); font-size: 10px; text-align: center; }
   #chips { display: flex; gap: 12px; }
   .pchip {
     width: 44px; height: 44px; border-radius: 999px; border: 1px solid var(--line);
@@ -216,6 +263,37 @@
   <span id="pointing">az &mdash; &middot; alt &mdash;</span>
 </div>
 
+<div id="timebar" style="display:none;">
+  <div id="tbPanel" style="display:none;">
+    <div class="tbrow tbread"><span id="tbLocal">&mdash;</span><span id="tbBadge" class="tbbadge live">LIVE</span></div>
+    <div class="tbrow tbutc" id="tbUtc">&mdash;</div>
+    <div class="tbrow">
+      <button id="tbRev" class="tbbtn" title="Reverse">&#9664;</button>
+      <button id="tbPlay" class="tbbtn" title="Play/Pause">&#10074;&#10074;</button>
+      <select id="tbSpeed" class="tbsel">
+        <option value="1">1&times;</option>
+        <option value="60">1 min/s</option>
+        <option value="3600">1 hr/s</option>
+        <option value="86400">1 day/s</option>
+        <option value="604800">1 wk/s</option>
+        <option value="2629800">1 mo/s</option>
+        <option value="31557600">1 yr/s</option>
+      </select>
+      <button id="tbNow" class="tbbtn tbnow">Now</button>
+    </div>
+    <div class="tbrow tbsteps">
+      <button data-step="-y">&minus;1y</button><button data-step="-mo">&minus;1mo</button>
+      <button data-step="-d">&minus;1d</button><button data-step="-h">&minus;1h</button>
+      <button data-step="+h">+1h</button><button data-step="+d">+1d</button>
+      <button data-step="+mo">+1mo</button><button data-step="+y">+1y</button>
+    </div>
+    <div class="tbrow"><input id="tbScrub" type="range" min="-72" max="72" step="0.25" value="0" title="Scrub &plusmn;3 days"></div>
+    <div class="tbrow"><input id="tbJump" type="datetime-local"><button id="tbGo" class="tbbtn">Go</button></div>
+    <div class="tbrow tbnote" id="tbNote" style="display:none;">far from present &mdash; reduced precision (high-accuracy range 1600&ndash;2200)</div>
+  </div>
+  <button id="tbPill">&#9650; <span id="tbPillText">&mdash;</span></button>
+</div>
+
 <div id="splash">
   <h1>Reality Engine &middot; Phase 1</h1>
   <p>Ephemeris + first anchored sky labels. Grants: Location, Motion &amp; Orientation, Camera. Hold the phone upright (portrait) and point the rear camera at the sky.</p>
@@ -225,6 +303,59 @@
 <script type="importmap">{ "imports": { "three": "./lib/three.module.js" } }</script>
 <script src="lib/astronomy.browser.js"></script>
 <script>
+/* ============================ SimClock (H08) ============================
+   The single source of time for the entire app. Every layer (AR sky, Space
+   Mode, dashboards) reads SimClock.now() instead of the system clock.
+   Lazily self-advancing: each read applies (realElapsed × rate), so no tick
+   loop is needed and every caller always sees the current sim instant.
+   LIVE mode tracks the real clock exactly (today's behavior). Clamped to
+   1600-01-01..2400-12-31 UTC: Astronomy Engine's documented high-accuracy
+   band is 1600..2200; it stays finite and well-behaved through 2400
+   (verified empirically), with gradually reduced precision — surfaced in
+   the UI outside 1800..2200. Playback auto-pauses at the clamp edges. */
+window.SimClock = (function () {
+  var MIN_MS = Date.UTC(1600, 0, 1);
+  var MAX_MS = Date.UTC(2400, 11, 31, 23, 59, 59);
+  var live = true, playing = true, dir = 1, preset = 1;
+  var simMs = Date.now(), lastReal = Date.now();
+  function clamp(m) { return Math.min(MAX_MS, Math.max(MIN_MS, m)); }
+  function advance() {
+    var now = Date.now();
+    if (live) { simMs = now; lastReal = now; return; }
+    if (playing) {
+      simMs = clamp(simMs + (now - lastReal) * preset * dir);
+      if (simMs === MIN_MS || simMs === MAX_MS) playing = false; // pin at edge
+    }
+    lastReal = now;
+  }
+  function leaveLive() { if (live) { live = false; lastReal = Date.now(); } }
+  return {
+    MIN_MS: MIN_MS, MAX_MS: MAX_MS,
+    now: function () { advance(); return new Date(simMs); },
+    ms: function () { advance(); return simMs; },
+    isLive: function () { return live; },
+    isPlaying: function () { advance(); return live || playing; },
+    getDir: function () { return live ? 1 : dir; },
+    getPreset: function () { return live ? 1 : preset; },
+    effectiveRate: function () { advance(); return live ? 1 : (playing ? preset * dir : 0); },
+    setPreset: function (r) { advance(); leaveLive(); preset = r; },
+    setDir: function (d) { advance(); leaveLive(); dir = d < 0 ? -1 : 1; },
+    play: function () { advance(); leaveLive(); playing = true; },
+    pause: function () { advance(); leaveLive(); playing = false; },
+    setTime: function (msOrDate) {
+      var m = msOrDate instanceof Date ? msOrDate.getTime() : msOrDate;
+      leaveLive();
+      simMs = clamp(m); lastReal = Date.now();
+    },
+    step: function (deltaMs) { advance(); leaveLive(); simMs = clamp(simMs + deltaMs); },
+    goLive: function () { live = true; playing = true; dir = 1; preset = 1; simMs = Date.now(); lastReal = simMs; },
+    farFromPresent: function () {
+      var y = new Date(simMs).getUTCFullYear();
+      return y < 1800 || y > 2200;
+    }
+  };
+})();
+
 (function () {
   "use strict";
 
@@ -448,6 +579,99 @@
     }
   });
 
+  /* ---- time bar (H08): UI over SimClock, works in AR and Space modes ---- */
+  var tb = {};
+  ["timebar","tbPill","tbPillText","tbPanel","tbLocal","tbUtc","tbBadge","tbRev",
+   "tbPlay","tbSpeed","tbNow","tbScrub","tbJump","tbGo","tbNote"].forEach(function (id) {
+    tb[id] = document.getElementById(id);
+  });
+
+  tb.tbPill.addEventListener("click", function () {
+    var open = tb.tbPanel.style.display === "none";
+    tb.tbPanel.style.display = open ? "block" : "none";
+    tb.tbPill.firstChild.textContent = open ? "▼ " : "▲ ";
+    try { localStorage.setItem("re_timebar_open", open ? "1" : "0"); } catch (e) {}
+  });
+  if ((function () { try { return localStorage.getItem("re_timebar_open") === "1"; } catch (e) { return false; } })()) {
+    tb.tbPanel.style.display = "block";
+    tb.tbPill.firstChild.textContent = "▼ ";
+  }
+
+  tb.tbPlay.addEventListener("click", function () {
+    if (SimClock.isPlaying()) SimClock.pause(); else SimClock.play();
+    refreshTimebar();
+  });
+  tb.tbRev.addEventListener("click", function () {
+    SimClock.setDir(SimClock.getDir() >= 0 ? -1 : 1);
+    SimClock.play();
+    refreshTimebar();
+  });
+  tb.tbSpeed.addEventListener("change", function () {
+    SimClock.setPreset(parseFloat(tb.tbSpeed.value));
+    SimClock.play();
+    refreshTimebar();
+  });
+  tb.tbNow.addEventListener("click", function () {
+    SimClock.goLive();
+    tb.tbScrub.value = "0"; scrubPrev = 0;
+    refreshTimebar();
+  });
+  // calendar-aware steps (±1mo/±1y honor month lengths and leap years)
+  Array.prototype.forEach.call(tb.timebar.querySelectorAll("[data-step]"), function (btn) {
+    btn.addEventListener("click", function () {
+      var s = btn.getAttribute("data-step"), sign = s[0] === "-" ? -1 : 1, unit = s.slice(1);
+      if (unit === "h") SimClock.step(sign * 3600e3);
+      else if (unit === "d") SimClock.step(sign * 86400e3);
+      else {
+        var d = SimClock.now();
+        if (unit === "mo") d.setMonth(d.getMonth() + sign);
+        else d.setFullYear(d.getFullYear() + sign);
+        SimClock.setTime(d);
+      }
+      refreshTimebar();
+    });
+  });
+  // fine scrubber: relative nudges (value = hours); recenters on release so
+  // repeated drags can walk any distance
+  var scrubPrev = 0;
+  tb.tbScrub.addEventListener("input", function () {
+    var v = parseFloat(tb.tbScrub.value);
+    SimClock.step((v - scrubPrev) * 3600e3);
+    scrubPrev = v;
+    refreshTimebar();
+  });
+  function endScrub() { tb.tbScrub.value = "0"; scrubPrev = 0; }
+  tb.tbScrub.addEventListener("change", endScrub);
+  tb.tbScrub.addEventListener("pointerup", endScrub);
+  tb.tbGo.addEventListener("click", function () {
+    if (!tb.tbJump.value) return;
+    var d = new Date(tb.tbJump.value); // parsed as local time, matching the input
+    if (!isNaN(d.getTime())) { SimClock.pause(); SimClock.setTime(d); }
+    refreshTimebar();
+  });
+
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+  function refreshTimebar() {
+    var d = SimClock.now();
+    var liveNow = SimClock.isLive();
+    var playing = SimClock.isPlaying();
+    var local = d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    tb.tbPillText.innerHTML = local + " · " + (liveNow ? '<span class="live">LIVE</span>' : '<span class="sim">' + (playing ? "SIM" : "PAUSED") + "</span>");
+    tb.tbLocal.textContent = local;
+    tb.tbUtc.textContent = d.toISOString().replace("T", " ").slice(0, 19) + " UTC · JD " + (d.getTime() / 86400000 + 2440587.5).toFixed(4);
+    tb.tbBadge.textContent = liveNow ? "LIVE" : (playing ? "SIM" : "PAUSED");
+    tb.tbBadge.className = "tbbadge " + (liveNow ? "live" : "sim");
+    tb.tbPlay.innerHTML = playing ? "&#10074;&#10074;" : "&#9654;";
+    tb.tbRev.classList.toggle("on", SimClock.getDir() < 0);
+    tb.tbSpeed.value = String(SimClock.getPreset());
+    tb.tbNote.style.display = SimClock.farFromPresent() ? "block" : "none";
+    if (document.activeElement !== tb.tbJump) {
+      tb.tbJump.value = d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) +
+        "T" + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+    }
+  }
+  setInterval(refreshTimebar, 250);
+
   // ---- math helpers ----
   var D2R = Math.PI / 180;
   function enu(azDeg, altDeg) { // unit vector, x=East y=North z=Up
@@ -595,16 +819,19 @@
 
   function starTick() {
     if (!observer || !starDb || arPaused) return;
-    var rot = Astronomy.Rotation_EQJ_HOR(Astronomy.MakeTime(new Date()), observer);
+    lastStarSimMs = SimClock.ms();
+    var rot = Astronomy.Rotation_EQJ_HOR(Astronomy.MakeTime(SimClock.now()), observer);
     rotateToENU(starVecJ2000, starDb.enu, starDb.n, rot.rot);
     starDb.ready = true;
     if (lineDb) { rotateToENU(lineDb.verts, lineDb.enu, lineDb.verts.length / 3, rot.rot); lineDb.ready = true; }
   }
 
   // ---- ephemeris (Step A) ----
+  var lastEphSimMs = -1e18, lastStarSimMs = -1e18; // sim instants last computed at (H08)
   function computeEphemeris() {
     if (!observer || arPaused) return;
-    var time = Astronomy.MakeTime(new Date());
+    lastEphSimMs = SimClock.ms();
+    var time = Astronomy.MakeTime(SimClock.now());
     eph = BODIES.map(function (b) {
       var eq = Astronomy.Equator(b.name, time, observer, true, true); // of-date equator, aberration
       var hor = Astronomy.Horizon(time, observer, eq.ra, eq.dec, "normal"); // refraction-corrected
@@ -635,7 +862,7 @@
       observer = new Astronomy.Observer(c.latitude, c.longitude, c.altitude || 0);
       setPill(els["st-geo"], "good", "GPS ±" + Math.round(c.accuracy) + "m");
       els.obsline.textContent = "obs " + c.latitude.toFixed(5) + ", " + c.longitude.toFixed(5) +
-        " · " + new Date().toISOString().slice(11, 19) + "Z";
+        " · " + SimClock.now().toISOString().slice(11, 19) + "Z";
       computeEphemeris();
     }, function (err) {
       setPill(els["st-geo"], "bad", "GPS denied");
@@ -711,11 +938,29 @@
     return r > 4.8 ? 4.8 : (r < 0.8 ? 0.8 : r);
   }
 
+  /* H08: when sim time moves faster than the 1 Hz/3 Hz live intervals can
+     follow (playback, scrub, jump), recompute per frame. 15 sim-seconds of
+     drift is < 0.07 deg of diurnal rotation - invisible. If a recompute pair
+     runs long (older phones), skip the following frame's recompute so draw
+     frames never starve (degrade cadence before dropping frames). */
+  var SIM_RECOMPUTE_THRESHOLD_MS = 15000;
+  var recomputeCooldown = false;
   function drawFrame() {
     if (arPaused) return; // dashboard covers the AR view; skip all draw work
     var w = window.innerWidth, h = window.innerHeight;
     ctx.clearRect(0, 0, w, h);
     if (!started) return;
+
+    var simMs = SimClock.ms();
+    if (recomputeCooldown) {
+      recomputeCooldown = false;
+    } else if (Math.abs(simMs - lastEphSimMs) > SIM_RECOMPUTE_THRESHOLD_MS ||
+               Math.abs(simMs - lastStarSimMs) > SIM_RECOMPUTE_THRESHOLD_MS) {
+      var rt0 = performance.now();
+      computeEphemeris();
+      starTick();
+      if (performance.now() - rt0 > 12) recomputeCooldown = true;
+    }
 
     var cam = makeCamera(w, h);
     var margin = 60, i, o, p;
@@ -862,6 +1107,8 @@
     els.splash.style.display = "none";
     els.topbar.style.display = "flex";
     els.botbar.style.display = "flex";
+    tb.timebar.style.display = "flex";
+    refreshTimebar();
     updatePanelTop(); // toolbar just became visible; measure before first open
     setInterval(updatePanelTop, 1000); // self-heal: pill text changes can rewrap the toolbar
     bindToggle(els.btnData, els.dataPanel, true, [[els.btnTargets, els.targetsPanel]]);

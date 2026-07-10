@@ -176,7 +176,7 @@ SpaceMode.prototype.buildDom = function () {
       ".spm-top{position:absolute;top:env(safe-area-inset-top,0);left:0;right:0;display:flex;gap:6px;align-items:center;padding:8px 10px;z-index:3;flex-wrap:wrap;}",
       ".spm-btn{padding:6px 12px;border-radius:999px;border:1px solid #222c47;background:rgba(13,17,32,.85);color:#e6ebff;font-size:12px;font-weight:600;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);}",
       ".spm-btn.on{border-color:#6ea8ff;color:#6ea8ff;}",
-      ".spm-bot{position:absolute;bottom:env(safe-area-inset-bottom,0);left:0;right:0;display:flex;flex-direction:column;align-items:center;gap:8px;padding:8px 10px 14px;z-index:3;}",
+      ".spm-bot{position:absolute;bottom:calc(env(safe-area-inset-bottom,0px) + 44px);left:0;right:0;display:flex;flex-direction:column;align-items:center;gap:8px;padding:8px 10px 8px;z-index:3;}",
       ".spm-chips{display:flex;gap:12px;}",
       ".spm-chip{width:44px;height:44px;border-radius:999px;border:1px solid #222c47;background:rgba(13,17,32,.85);color:#e6ebff;font-size:20px;line-height:1;}",
       ".spm-hint{color:#8a93b2;font-size:11px;font-family:'SF Mono',ui-monospace,Menlo,monospace;background:rgba(13,17,32,.7);padding:4px 12px;border-radius:999px;}",
@@ -373,6 +373,7 @@ SpaceMode.prototype.buildScene = function () {
     g.setAttribute("psize", new THREE.BufferAttribute(size, 1));
     var mat = new THREE.ShaderMaterial({
       vertexShader:
+        "uniform float uScale;" + // custom uniforms must be declared in GLSL
         "attribute float psize; attribute vec3 color; varying vec3 vColor;" +
         "void main(){ vColor = color;" +
         " gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);" +
@@ -469,7 +470,8 @@ SpaceMode.prototype.buildScene = function () {
 SpaceMode.prototype.updatePlanets = function () {
   if (this.disposed) return;
   var self = this;
-  var time = A.MakeTime(new Date());
+  this.lastPlanetSimMs = window.SimClock ? window.SimClock.ms() : Date.now();
+  var time = A.MakeTime(window.SimClock ? window.SimClock.now() : new Date());
   this.planetSprites.forEach(function (ps) {
     var gv = A.GeoVector(ps.cfg.name, time, true);
     var dir = toScene(gv).normalize();
@@ -485,11 +487,14 @@ SpaceMode.prototype.applyCamera = function () {
   var view = this.opts.getView ? this.opts.getView() : null;
   var obs = this.opts.getObserver ? this.opts.getObserver() : null;
   if (this.lookMode === "gyro" && view && view.az != null && obs) {
-    // horizon az/alt -> EQJ via the ephemeris (recompute rotation ~1/s)
+    // horizon az/alt -> EQJ at SIM time (recomputed ~1/s, or immediately when
+    // sim time moves fast, so time travel wheels the sky in gyro look too)
     var now = Date.now();
-    if (!this._horRot || now - this._horRotAt > 1000) {
-      this._horRot = A.Rotation_HOR_EQJ(A.MakeTime(new Date()), obs);
-      this._horRotAt = now;
+    var simMs = window.SimClock ? window.SimClock.ms() : now;
+    if (!this._horRot || now - this._horRotAt > 1000 ||
+        Math.abs(simMs - (this._horRotSimMs || 0)) > 15000) {
+      this._horRot = A.Rotation_HOR_EQJ(A.MakeTime(window.SimClock ? window.SimClock.now() : new Date()), obs);
+      this._horRotAt = now; this._horRotSimMs = simMs;
     }
     var az = view.az * D2R, alt = view.alt * D2R;
     // ENU -> astronomy HOR frame (x=N, y=W, z=Up)
@@ -614,6 +619,10 @@ SpaceMode.prototype.loop = function () {
     self.rafId = requestAnimationFrame(frame);
     if (self.suspended || document.hidden) return;
     var t0 = performance.now();
+    // H08: keep sprites current when sim time outruns the 1 Hz timer
+    if (window.SimClock && Math.abs(window.SimClock.ms() - (self.lastPlanetSimMs || 0)) > 15000) {
+      self.updatePlanets();
+    }
     self.applyCamera();
     if (self.bloomOn) self.composer.render(); else self.renderer.render(self.scene, self.camera);
     self.drawOverlay();

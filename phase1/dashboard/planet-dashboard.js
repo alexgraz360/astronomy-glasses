@@ -299,7 +299,6 @@ export function closeDashboard() {
 function Dashboard(name, cfg, opts) {
   var self = this;
   this.name = name; this.cfg = cfg; this.opts = opts;
-  this.offsetDays = 0;
   this.scaleMode = "enhanced"; // "enhanced" | "true"
   this.disposed = false;
   this.moons = [];
@@ -314,7 +313,7 @@ function Dashboard(name, cfg, opts) {
     self.updateEphemeris();
     self.resetCamera();
     self.el.spinner.style.display = "none";
-    self.timer = setInterval(function () { if (self.offsetDays === 0) self.updateEphemeris(); self.updateStats(); }, 1000);
+    self.timer = setInterval(function () { self.updateEphemeris(); self.updateStats(); }, 1000);
     self.loop();
   }).catch(function (err) {
     self.el.spinner.textContent = "Failed to load textures: " + err;
@@ -386,12 +385,21 @@ Dashboard.prototype.buildDom = function () {
   };
 
   this.el.close.addEventListener("click", function () { closeDashboard(); });
+  // slider = relative nudge of the global SimClock (±7 d per drag; recenters
+  // on release so repeated drags can walk any distance)
+  this.sliderPrev = 0;
   this.el.slider.addEventListener("input", function () {
-    self.offsetDays = parseFloat(self.el.slider.value);
+    var v = parseFloat(self.el.slider.value);
+    if (window.SimClock) window.SimClock.step((v - self.sliderPrev) * 86400000);
+    self.sliderPrev = v;
     self.updateEphemeris(); self.updateStats();
   });
+  function endDashScrub() { self.el.slider.value = "0"; self.sliderPrev = 0; }
+  this.el.slider.addEventListener("change", endDashScrub);
+  this.el.slider.addEventListener("pointerup", endDashScrub);
   this.el.now.addEventListener("click", function () {
-    self.offsetDays = 0; self.el.slider.value = "0";
+    if (window.SimClock) window.SimClock.goLive();
+    endDashScrub();
     self.updateEphemeris(); self.updateStats();
   });
   this.el.infoBtn.addEventListener("click", function () {
@@ -654,12 +662,15 @@ Dashboard.prototype.buildScene = function (tex) {
 
 /* ---------- ephemeris-driven state ---------- */
 
+/* H08: the dashboard reads the GLOBAL SimClock — no local time. Its slider
+   below nudges the global clock, so AR/Space/time-bar all stay in sync. */
 Dashboard.prototype.time = function () {
-  return A.MakeTime(new Date(Date.now() + this.offsetDays * 86400000));
+  return A.MakeTime(window.SimClock ? window.SimClock.now() : new Date());
 };
 
 Dashboard.prototype.updateEphemeris = function () {
   if (!this.scene) return;
+  this.lastSimMs = window.SimClock ? window.SimClock.ms() : Date.now();
   var time = this.time(), cfg = this.cfg, self = this;
 
   this.orient = bodyOrientation(this.name, time);
@@ -705,11 +716,11 @@ Dashboard.prototype.updateEphemeris = function () {
 };
 
 Dashboard.prototype.updateTimeLabel = function () {
-  var d = new Date(Date.now() + this.offsetDays * 86400000);
-  var off = this.offsetDays;
-  var tag = off === 0 ? "NOW" : ("T " + (off > 0 ? "+" : "−") + Math.abs(off).toFixed(2) + " d");
+  var d = window.SimClock ? window.SimClock.now() : new Date();
+  var tag = (!window.SimClock || window.SimClock.isLive()) ? "LIVE" :
+    (window.SimClock.isPlaying() ? "SIM" : "PAUSED");
   this.el.tlabel.textContent = tag + " · " +
-    d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 };
 
 Dashboard.prototype.updateStats = function () {
@@ -755,6 +766,10 @@ Dashboard.prototype.loop = function () {
     if (self.disposed) return;
     self.rafId = requestAnimationFrame(frame);
     if (document.hidden) return; // pause when tab hidden
+    // H08: fast playback -> recompute rotation/lighting/moons per frame
+    if (window.SimClock && Math.abs(window.SimClock.ms() - (self.lastSimMs || 0)) > 15000) {
+      self.updateEphemeris();
+    }
     // drag momentum
     if (Math.abs(self.velYaw) > 1e-4 || Math.abs(self.velPitch) > 1e-4) {
       self.yaw += self.velYaw; self.pitch = THREE.MathUtils.clamp(self.pitch + self.velPitch, -1.45, 1.45);
@@ -819,5 +834,8 @@ export var _debug = {
   moonPositions: function () {
     return session && session.moons.map(function (m) { return { name: m.cfg.name, p: m.mesh.position.toArray() }; });
   },
-  setOffset: function (d) { if (session) { session.offsetDays = d; session.updateEphemeris(); } }
+  setOffset: function (d) { // now nudges the GLOBAL clock (H08)
+    if (window.SimClock) window.SimClock.step(d * 86400000);
+    if (session) session.updateEphemeris();
+  }
 };
