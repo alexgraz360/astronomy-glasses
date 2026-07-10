@@ -57,6 +57,28 @@ var FLY = {
   returnMs: 700,    // eased FOV return leg of the peek
   fadeMs: 260       // fade through black at the dashboard seam
 };
+/* Free-flight tuning (H10). Scene units are PARSECS (star positions use real
+   HYG distances), so flight is simply a translating camera. Speed slider is
+   log-scale minLyS..maxLyS; effective speed eases down near stars (adaptive)
+   so arrivals stay controllable. Fly-to-star is a single eased path segment
+   ending arriveDistPc short of the star — no overshoot by construction. The
+   close-up orb is STYLIZED (orbRadiusPc): true stellar radii aren't in the
+   catalog, and the card says so. Position clamps at maxRangePc ("edge of
+   charted stars" — HYG bubble is capped at 700 pc). DSO billboards dissolve
+   between dsoFadeStart..dsoFadeEnd world units so you can never fly into a
+   flat image; the Milky Way sphere + constellation lines follow the camera
+   as directional backdrops (the galaxy dwarfs our 700 pc bubble). */
+var FLIGHT = {
+  minLyS: 0.01, maxLyS: 100,
+  pcPerLy: 0.306601,
+  arriveDistPc: 0.15,
+  orbRadiusPc: 0.03,
+  maxRangePc: 800,
+  planetFadePc: 30,
+  dsoFadeStart: 1000, dsoFadeEnd: 750,
+  nearEasePc: 1.5, nearEaseFloor: 0.2
+};
+
 function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
@@ -189,6 +211,16 @@ function SpaceMode(opts) {
   this.fly = null;
   this.frameTimes = [];
   this.bloomOn = true;
+  // H10 free-flight state
+  this.flyMode = false;
+  this.camPos = new THREE.Vector3();
+  this.vel = new THREE.Vector3();
+  this.thrust = 0;      // -1 back, 0 coast, +1 forward (hold buttons)
+  this.speedT = 0.5;    // log-slider position -> speedLyS()
+  this.autopilot = null;
+  this.nearest = { name: null, namedPc: 1e9, anyPc: 1e9 };
+  this._nearScanAt = 0;
+  this._frameAt = performance.now();
 
   this.buildDom();
   this.buildRenderer();

@@ -222,6 +222,11 @@
     border: 1px solid var(--line); background: #141a2e; color: var(--accent);
     font-size: 14px; font-weight: 700;
   }
+  #card .cact {
+    width: 100%; margin-top: 10px; padding: 11px; border-radius: 10px;
+    border: 1px solid rgba(110,168,255,0.6); background: rgba(58,123,255,0.18);
+    color: #fff; font-size: 14px; font-weight: 700;
+  }
   #chips { display: flex; gap: 12px; }
   .pchip {
     width: 44px; height: 44px; border-radius: 999px; border: 1px solid var(--line);
@@ -628,9 +633,19 @@ window.SimClock = (function () {
     }
     if (spec.desc) h += '<div class="cdesc">' + spec.desc + "</div>";
     if (spec.credit) h += '<div class="ccredit">' + spec.credit + "</div>";
+    if (spec.actions) spec.actions.forEach(function (a, i) {
+      h += '<button class="cact" data-act="' + i + '">' + a.label + "</button>";
+    });
     h += '<button class="cback">← Back</button>';
     cardEl.innerHTML = h;
     cardEl.querySelector(".cback").addEventListener("click", closeCard);
+    if (spec.actions) Array.prototype.forEach.call(cardEl.querySelectorAll(".cact"), function (btn) {
+      btn.addEventListener("click", function () {
+        var a = spec.actions[parseInt(btn.getAttribute("data-act"), 10)];
+        closeCard();
+        if (a && a.onClick) try { a.onClick(); } catch (e) { console.error(e); }
+      });
+    });
     cardWrap.style.display = "flex";
     cardEl.scrollTop = 0;
   }
