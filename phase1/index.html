@@ -253,6 +253,7 @@
   <button id="btnStars" class="tbtn on">Stars</button>
   <button id="btnLines" class="tbtn on">Lines</button>
   <button id="btnNames" class="tbtn on">Names</button>
+  <button id="btnArt" class="tbtn">Art</button>
   <button id="btnBelow" class="tbtn">Below</button>
 </div>
 
@@ -467,7 +468,7 @@ window.SimClock = (function () {
   var els = {};
   ["cam","sky","splash","startBtn","topbar","botbar","dataPanel","tunePanel",
    "btnData","btnTune","btnStars","btnLines","btnNames","dataMeta",
-   "btnTargets","btnBelow","targetsPanel","targetsBody",
+   "btnTargets","btnBelow","btnArt","targetsPanel","targetsBody",
    "ephBody","obsline","pointing","st-geo","st-ori","st-cam",
    "v-fov","v-azo","v-alto","tuneReset"].forEach(function (id) {
     els[id] = document.getElementById(id);
@@ -511,10 +512,11 @@ window.SimClock = (function () {
       var s = JSON.parse(localStorage.getItem("re_phase1_layers"));
       if (s && typeof s.stars === "boolean") {
         s.below = s.below === true; // added H05; older saves lack it -> default OFF
+        s.art = s.art === true;     // added H12; default OFF
         return s;
       }
     } catch (e) {}
-    return { stars: true, lines: true, names: true, below: false };
+    return { stars: true, lines: true, names: true, below: false, art: false };
   }
   function bindLayer(btn, key) {
     btn.classList.toggle("on", layers[key]);
@@ -527,7 +529,10 @@ window.SimClock = (function () {
   bindLayer(els.btnStars, "stars");
   bindLayer(els.btnLines, "lines");
   bindLayer(els.btnNames, "names");
+  bindLayer(els.btnArt, "art");
   bindLayer(els.btnBelow, "below");
+  els.btnArt.addEventListener("click", function () { if (layers.art) loadArtData(); });
+  if (layers.art) loadArtData(); // persisted ON from a previous visit
 
   /* Panels open below the REAL toolbar bottom (it wraps to two rows on
      phones); measured, not hard-coded, and refreshed on resize/rotation and
@@ -878,6 +883,34 @@ window.SimClock = (function () {
     }
   }
 
+  /* ---- constellation art (H12): Johan Meuris / Stellarium modern set,
+     Free Art License 1.3 (copyleft/share-alike). Each figure carries 3
+     anchor points (image px <-> star RA/Dec); the anchors ride the SAME
+     rotate-to-ENU pipeline as the stars, so the art wheels with Time Travel
+     and respects the horizon for free. Drawn affine-warped, additive and
+     translucent, BENEATH lines/dots/labels. Images lazy-load on first
+     visibility and are dropped again after ART_KEEP_MS out of view. ---- */
+  var ART_ALPHA = 0.28;       // over the live camera; slightly conservative
+  var ART_ALPHA_BELOW = 0.12; // ghosted when fully below horizon (Below mode)
+  var ART_KEEP_MS = 30000;
+  var artDb = null, artLoading = false;
+  function loadArtData() {
+    if (artDb || artLoading) return;
+    artLoading = true;
+    fetch("data/constellation-art.json").then(function (r) { return r.json(); }).then(function (aj) {
+      var entries = aj.art;
+      var n = entries.length * 3;
+      var vec = new Float64Array(n * 3);
+      entries.forEach(function (en, i) {
+        en.imgEl = null; en.loadState = 0; en.lastSeen = 0;
+        for (var a = 0; a < 3; a++) raDecToXyz(en.anchors[a].ra, en.anchors[a].dec, vec, (i * 3 + a) * 3);
+      });
+      artDb = { entries: entries, vecJ2000: vec, enu: new Float32Array(n * 3), ready: false };
+      els.dataMeta.textContent += " · art: Johan Meuris (Free Art License)";
+      starTick();
+    }).catch(function (err) { artLoading = false; console.error("art data failed", err); });
+  }
+
   function starTick() {
     if (!observer || !starDb || arPaused) return;
     lastStarSimMs = SimClock.ms();
@@ -885,6 +918,7 @@ window.SimClock = (function () {
     rotateToENU(starVecJ2000, starDb.enu, starDb.n, rot.rot);
     starDb.ready = true;
     if (lineDb) { rotateToENU(lineDb.verts, lineDb.enu, lineDb.verts.length / 3, rot.rot); lineDb.ready = true; }
+    if (artDb) { rotateToENU(artDb.vecJ2000, artDb.enu, artDb.vecJ2000.length / 3, rot.rot); artDb.ready = true; }
   }
 
   // ---- ephemeris (Step A) ----
@@ -942,6 +976,14 @@ window.SimClock = (function () {
     if (rawHeading == null || e.beta == null) return;
     if (!oriSeen) { oriSeen = true; setPill(els["st-ori"], "good", "ORI live"); }
 
+    // H12: raw full orientation for Space Mode's quaternion camera (the
+    // az/alt decomposition below gimbal-locks near the zenith; the raw
+    // angles let Space Mode build a singularity-free rotation)
+    view.alpha = e.alpha; view.beta = e.beta; view.gamma = e.gamma;
+    view.compass = (typeof e.webkitCompassHeading === "number" && !isNaN(e.webkitCompassHeading)) ? e.webkitCompassHeading : null;
+    view.screen = (window.screen && screen.orientation && typeof screen.orientation.angle === "number")
+      ? screen.orientation.angle : (typeof window.orientation === "number" ? window.orientation : 0);
+
     var rawAlt = e.beta - 90; // portrait: camera altitude (see convention block)
     if (view.az == null) { view.az = rawHeading; view.alt = rawAlt; return; }
     view.az = wrap360(view.az + angDiff(rawHeading, view.az) * SMOOTH);
@@ -994,6 +1036,62 @@ window.SimClock = (function () {
   resizeCanvas();
 
   var _pa = { x: 0, y: 0 }, _pb = { x: 0, y: 0 };
+  var _ax = [0, 0, 0], _ay = [0, 0, 0];
+  /* Draw the art figures: project each figure's 3 anchor stars with the
+     shared camera, solve the exact affine (image px -> screen px) from the
+     3 point-pairs, and composite the image additively (its black background
+     disappears over the camera feed). */
+  function drawArt(cam, w, h) {
+    var now = Date.now();
+    var e = artDb.enu;
+    for (var i = 0; i < artDb.entries.length; i++) {
+      var en = artDb.entries[i];
+      var up = 0, ok = true, a, o;
+      for (a = 0; a < 3; a++) {
+        o = (i * 3 + a) * 3;
+        if (e[o + 2] > STAR_MIN_UP) up++;
+        if (!projectVec(cam, e[o], e[o + 1], e[o + 2], _pa)) { ok = false; break; }
+        _ax[a] = _pa.x; _ay[a] = _pa.y;
+      }
+      if (!ok) continue;                        // an anchor is behind the camera
+      if (up === 0 && !layers.below) continue;  // fully below the horizon
+      var m = 420; // generous: the figure extends well beyond its anchor triangle
+      if ((_ax[0] < -m && _ax[1] < -m && _ax[2] < -m) || (_ax[0] > w + m && _ax[1] > w + m && _ax[2] > w + m) ||
+          (_ay[0] < -m && _ay[1] < -m && _ay[2] < -m) || (_ay[0] > h + m && _ay[1] > h + m && _ay[2] > h + m)) continue;
+      en.lastSeen = now;
+      if (en.loadState === 0) { // lazy-load on first visibility
+        en.loadState = 1;
+        en.imgEl = new Image();
+        en.imgEl.onload = function () { this._ok = true; };
+        en.imgEl.src = "textures/constellation-art/" + en.img;
+      }
+      if (!en.imgEl || !en.imgEl._ok) continue;
+      var A0 = en.anchors[0], A1 = en.anchors[1], A2 = en.anchors[2];
+      var det = A0.x * (A1.y - A2.y) + A1.x * (A2.y - A0.y) + A2.x * (A0.y - A1.y);
+      if (Math.abs(det) < 1e-6) continue;
+      var ta = (_ax[0] * (A1.y - A2.y) + _ax[1] * (A2.y - A0.y) + _ax[2] * (A0.y - A1.y)) / det;
+      var tc = (_ax[0] * (A2.x - A1.x) + _ax[1] * (A0.x - A2.x) + _ax[2] * (A1.x - A0.x)) / det;
+      var te = _ax[0] - ta * A0.x - tc * A0.y;
+      var tb = (_ay[0] * (A1.y - A2.y) + _ay[1] * (A2.y - A0.y) + _ay[2] * (A0.y - A1.y)) / det;
+      var td = (_ay[0] * (A2.x - A1.x) + _ay[1] * (A0.x - A2.x) + _ay[2] * (A1.x - A0.x)) / det;
+      var tf = _ay[0] - tb * A0.x - td * A0.y;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = up === 0 ? ART_ALPHA_BELOW : ART_ALPHA;
+      ctx.transform(ta, tb, tc, td, te, tf);
+      ctx.drawImage(en.imgEl, 0, 0);
+      ctx.restore();
+    }
+    if (!artDb._sweepAt || now - artDb._sweepAt > 5000) { // drop long-unseen images
+      artDb._sweepAt = now;
+      artDb.entries.forEach(function (en2) {
+        if (en2.loadState === 1 && en2.imgEl && en2.imgEl._ok && now - en2.lastSeen > ART_KEEP_MS) {
+          en2.imgEl = null; en2.loadState = 0;
+        }
+      });
+    }
+  }
+
   function starRadius(mag) { // brighter = bigger; mag -1.4 -> ~4.8px, 5.5 -> 0.8px
     var r = 4.0 - 0.58 * mag;
     return r > 4.8 ? 4.8 : (r < 0.8 ? 0.8 : r);
@@ -1025,6 +1123,9 @@ window.SimClock = (function () {
 
     var cam = makeCamera(w, h);
     var margin = 60, i, o, p;
+
+    // constellation art (H12): affine-warped figures beneath everything else
+    if (cam && layers.art && artDb && artDb.ready) drawArt(cam, w, h);
 
     /* constellation lines (dim, under everything). Horizon-consistent since
        H05: segments with BOTH endpoints below the horizon are culled unless
@@ -1227,7 +1328,24 @@ window.SimClock = (function () {
     },
     debugSetView: function (az, alt) { view.az = az; view.alt = alt; },
     debugProject: function (az, alt) { return project(az, alt, window.innerWidth, window.innerHeight); },
-    debugStarTick: function () { starTick(); return { stars: starDb && starDb.ready, lines: lineDb && lineDb.ready }; },
+    debugStarTick: function () { starTick(); return { stars: starDb && starDb.ready, lines: lineDb && lineDb.ready, art: !!(artDb && artDb.ready) }; },
+    debugLoadArt: function () { loadArtData(); return artLoading || !!artDb; },
+    debugArtAnchorsScreen: function (con) { // projected anchors for alignment checks
+      if (!artDb || !artDb.ready) return null;
+      var cam = makeCamera(window.innerWidth, window.innerHeight);
+      if (!cam) return null;
+      for (var i = 0; i < artDb.entries.length; i++) {
+        if (artDb.entries[i].con !== con) continue;
+        var out = [];
+        for (var a = 0; a < 3; a++) {
+          var o = (i * 3 + a) * 3;
+          if (!projectVec(cam, artDb.enu[o], artDb.enu[o + 1], artDb.enu[o + 2], _pt)) return { behind: true };
+          out.push([_pt.x, _pt.y]);
+        }
+        return { pts: out, anchors: artDb.entries[i].anchors };
+      }
+      return null;
+    },
     debugDrawFrame: drawFrame,
     debugStarAzAlt: function (idx) { // returns [az, alt] of star idx from the live ENU buffer
       if (!starDb || !starDb.ready) return null;
@@ -1243,7 +1361,8 @@ window.SimClock = (function () {
     setARPaused: setARPaused,
     getObserver: function () { return observer; },
     getView: function () { return view; },
-    isARPaused: function () { return arPaused; }
+    isARPaused: function () { return arPaused; },
+    debugOrientationEvent: onOrientation // feed synthetic events in tests (H12)
   };
 })();
 </script>

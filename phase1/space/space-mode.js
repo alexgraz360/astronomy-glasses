@@ -184,7 +184,7 @@ function SpaceMode(opts) {
   this.lookMode = "drag";       // switched to "gyro" if orientation flows
   this.viewRa = 17.75 * 15;     // start facing the galactic center (deg)
   this.viewDec = -29;
-  this.flags = { lines: true, names: true, planets: true };
+  this.flags = { lines: true, names: true, planets: true, art: false }; // art default OFF (H12)
   this.planetPos = {};          // name -> Vector3
   this.fly = null;
   this.frameTimes = [];
@@ -229,6 +229,7 @@ SpaceMode.prototype.buildDom = function () {
     '<button class="spm-btn spm-lines on">Lines</button>' +
     '<button class="spm-btn spm-names on">Names</button>' +
     '<button class="spm-btn spm-planets on">Planets</button>' +
+    '<button class="spm-btn spm-art">Art</button>' +
     "</div>" +
     '<div class="spm-bot">' +
     '<div class="spm-chips">' +
@@ -252,13 +253,17 @@ SpaceMode.prototype.buildDom = function () {
     self.lookMode = self.lookMode === "gyro" ? "drag" : "gyro";
     self.syncLookBtn();
   });
-  [["lines", ".spm-lines"], ["names", ".spm-names"], ["planets", ".spm-planets"]].forEach(function (pair) {
+  [["lines", ".spm-lines"], ["names", ".spm-names"], ["planets", ".spm-planets"], ["art", ".spm-art"]].forEach(function (pair) {
     var btn = root.querySelector(pair[1]);
     btn.addEventListener("click", function () {
       self.flags[pair[0]] = !self.flags[pair[0]];
       btn.classList.toggle("on", self.flags[pair[0]]);
       if (self.lineMesh) self.lineMesh.visible = self.flags.lines;
       if (self.planetGroup) self.planetGroup.visible = self.flags.planets;
+      if (pair[0] === "art") {
+        if (self.flags.art) self.enableArt();
+        else if (self.artGroup) self.artGroup.visible = false;
+      }
     });
   });
   root.querySelectorAll(".spm-chip").forEach(function (btn) {
@@ -521,13 +526,45 @@ SpaceMode.prototype.updatePlanets = function () {
 
 /* ----------------------------- look/camera ----------------------------- */
 
+/* H12 gimbal-lock fix. The old gyro path decomposed the phone pose into
+   compass-az + (beta-90) altitude against a fixed up vector; near the zenith
+   the compass heading is undefined and flips 180°, so the view "fought" and
+   snapped. The camera is now driven by the device's FULL orientation as a
+   quaternion built from raw alpha/beta/gamma + screen angle (the standard
+   'YXZ' + back-camera construction) — no pole singularity, so panning from
+   horizon over the zenith to the other horizon is continuous. Absolute
+   azimuth (iOS alpha is arbitrary-origin) comes from a slowly-adapted offset
+   calibrated against webkitCompassHeading ONLY while pointing within 45° of
+   the horizon, where the compass is trustworthy. Away from the poles this
+   reduces exactly to the old az/alt mapping (verified algebraically and in
+   tests), plus correct roll for free. */
+var _qEul = new THREE.Euler();
+var _qDev = new THREE.Quaternion();
+var _qScr = new THREE.Quaternion();
+var _Q_BACK = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)); // -90° about X: look out the back camera
+var _Z_AXIS = new THREE.Vector3(0, 0, 1);
+var _fLoc = new THREE.Vector3(), _uLoc = new THREE.Vector3();
+function angDiffDeg(a, b) { var d = (a - b) % 360; if (d > 180) d -= 360; if (d < -180) d += 360; return d; }
+function rotY(v, th) {
+  var c = Math.cos(th), s = Math.sin(th);
+  var x = v.x * c + v.z * s, z = -v.x * s + v.z * c;
+  v.x = x; v.z = z;
+}
+
+// local device-world (Y=up) -> ENU -> astronomy HOR (N,-E,U) -> EQJ -> scene
+SpaceMode.prototype.lToScene = function (vL) {
+  var eq = A.RotateVector(this._horRot, new A.Vector(-vL.z, vL.x, vL.y, null));
+  return new THREE.Vector3(eq.x, eq.z, -eq.y).normalize();
+};
+
 SpaceMode.prototype.applyCamera = function () {
   var dir, up;
   var view = this.opts.getView ? this.opts.getView() : null;
   var obs = this.opts.getObserver ? this.opts.getObserver() : null;
-  if (this.lookMode === "gyro" && view && view.az != null && obs) {
-    // horizon az/alt -> EQJ at SIM time (recomputed ~1/s, or immediately when
-    // sim time moves fast, so time travel wheels the sky in gyro look too)
+  var gyroOk = this.lookMode === "gyro" && view && view.az != null && obs;
+  if (gyroOk) {
+    // horizon->EQJ at SIM time (recomputed ~1/s, or immediately when sim
+    // time moves fast, so time travel wheels the sky in gyro look too)
     var now = Date.now();
     var simMs = window.SimClock ? window.SimClock.ms() : now;
     if (!this._horRot || now - this._horRotAt > 1000 ||
@@ -535,11 +572,35 @@ SpaceMode.prototype.applyCamera = function () {
       this._horRot = A.Rotation_HOR_EQJ(A.MakeTime(window.SimClock ? window.SimClock.now() : new Date()), obs);
       this._horRotAt = now; this._horRotSimMs = simMs;
     }
+  }
+  if (gyroOk && view.alpha != null && view.beta != null && view.gamma != null) {
+    // quaternion path (no gimbal lock)
+    _qEul.set(view.beta * D2R, view.alpha * D2R, -view.gamma * D2R, "YXZ");
+    _qDev.setFromEuler(_qEul)
+      .multiply(_Q_BACK)
+      .multiply(_qScr.setFromAxisAngle(_Z_AXIS, -(view.screen || 0) * D2R));
+    _fLoc.set(0, 0, -1).applyQuaternion(_qDev);
+    _uLoc.set(0, 1, 0).applyQuaternion(_qDev);
+    // calibrate the alpha yaw origin against the compass, near horizon only
+    var azQ = Math.atan2(-_fLoc.x, -_fLoc.z) * R2D;
+    var altQ = Math.asin(THREE.MathUtils.clamp(_fLoc.y, -1, 1)) * R2D;
+    if (view.compass != null && Math.abs(altQ) < 45) {
+      var target = angDiffDeg(view.az - azQ, 0);
+      if (this._azOff == null) this._azOff = target;
+      else this._azOff += angDiffDeg(target, this._azOff) * 0.02;
+    } else if (this._azOff == null) {
+      this._azOff = 0; // Android absolute alpha: already north-referenced
+    }
+    var off = this._azOff * D2R;
+    rotY(_fLoc, off); rotY(_uLoc, off);
+    dir = this.lToScene(_fLoc);
+    up = this.lToScene(_uLoc);
+  } else if (gyroOk) {
+    // fallback (raw angles unavailable): original az/alt mapping
     var az = view.az * D2R, alt = view.alt * D2R;
-    // ENU -> astronomy HOR frame (x=N, y=W, z=Up)
     var hor = { x: Math.cos(alt) * Math.cos(az), y: -Math.cos(alt) * Math.sin(az), z: Math.sin(alt) };
-    var eq = A.RotateVector(this._horRot, new A.Vector(hor.x, hor.y, hor.z, null));
-    dir = toScene(eq).normalize();
+    var eq2 = A.RotateVector(this._horRot, new A.Vector(hor.x, hor.y, hor.z, null));
+    dir = toScene(eq2).normalize();
     var zen = A.RotateVector(this._horRot, new A.Vector(0, 0, 1, null));
     up = toScene(zen).normalize();
   } else {
@@ -559,6 +620,94 @@ SpaceMode.prototype.applyCamera = function () {
   this.camera.position.set(0, 0, 0);
   this.camera.up.copy(up);
   this.camera.lookAt(dir);
+};
+
+/* ---------------- constellation art (H12, Space Mode) ----------------
+   Johan Meuris / Stellarium modern figures, Free Art License 1.3. Each
+   figure becomes ONE quad on the celestial shell at R_ART (between the
+   lines at 1800 and the sky at 2000, renderOrder under the lines): the
+   image plane P(x,y) = origin + x·U + y·V is solved exactly from the 3
+   anchor pairs (image px <-> star direction·R_ART), so the anchors sit on
+   their stars by construction. Textures lazy-load when a figure comes
+   within ~95° of the view and are disposed after 30 s out of view. */
+var R_ART = 1950;
+var ART_SPACE_OPACITY = 0.35;
+
+SpaceMode.prototype.enableArt = function () {
+  var self = this;
+  if (this.artGroup) { this.artGroup.visible = true; return; }
+  this.artGroup = new THREE.Group();
+  this.scene.add(this.artGroup);
+  this.flashHint("Constellation art: Johan Meuris · Free Art License");
+  fetch("data/constellation-art.json").then(function (r) { return r.json(); }).then(function (aj) {
+    if (self.disposed) return;
+    aj.art.forEach(function (en) {
+      var P = en.anchors.map(function (a) { return raDecToScene(a.ra, a.dec, R_ART); });
+      var x0 = en.anchors[0].x, y0 = en.anchors[0].y;
+      var dx1 = en.anchors[1].x - x0, dy1 = en.anchors[1].y - y0;
+      var dx2 = en.anchors[2].x - x0, dy2 = en.anchors[2].y - y0;
+      var d = dx1 * dy2 - dx2 * dy1;
+      if (Math.abs(d) < 1e-6) return;
+      var e1 = P[1].clone().sub(P[0]), e2 = P[2].clone().sub(P[0]);
+      var U = e1.clone().multiplyScalar(dy2 / d).add(e2.clone().multiplyScalar(-dy1 / d));
+      var V = e1.clone().multiplyScalar(-dx2 / d).add(e2.clone().multiplyScalar(dx1 / d));
+      var origin = P[0].clone().sub(U.clone().multiplyScalar(x0)).sub(V.clone().multiplyScalar(y0));
+      var corners = [[0, 0], [en.w, 0], [en.w, en.h], [0, en.h]].map(function (c) {
+        return origin.clone().add(U.clone().multiplyScalar(c[0])).add(V.clone().multiplyScalar(c[1]));
+      });
+      var g = new THREE.BufferGeometry();
+      var pos = new Float32Array(12);
+      corners.forEach(function (cn, ci) { pos[ci * 3] = cn.x; pos[ci * 3 + 1] = cn.y; pos[ci * 3 + 2] = cn.z; });
+      g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      g.setAttribute("uv", new THREE.Float32BufferAttribute([0, 1, 1, 1, 1, 0, 0, 0], 2)); // flipY texture convention
+      g.setIndex([0, 1, 2, 0, 2, 3]);
+      var mat = new THREE.MeshBasicMaterial({
+        transparent: true, opacity: ART_SPACE_OPACITY, blending: THREE.AdditiveBlending,
+        depthWrite: false, side: THREE.DoubleSide
+      });
+      var mesh = new THREE.Mesh(g, mat);
+      mesh.renderOrder = -2.5; // above the sky (-3), beneath the lines (-2)
+      mesh.frustumCulled = false; // visibility is texture-managed in artSweep
+      mesh.visible = false;
+      var center = P[0].clone().add(P[1]).add(P[2]).normalize();
+      mesh.userData = { img: en.img, con: en.con, centerDir: center, lastSeen: 0, loading: false };
+      self.artGroup.add(mesh);
+    });
+    self.artSweep();
+  }).catch(function (e) { console.error("art load failed", e); });
+};
+
+/* Lazy texture management: load figures near the view, drop far ones. */
+SpaceMode.prototype.artSweep = function () {
+  if (!this.artGroup || !this.artGroup.visible || this.disposed) return;
+  var fwd = this.camera.getWorldDirection(new THREE.Vector3());
+  var now = Date.now();
+  this.artGroup.children.forEach(function (mesh) {
+    var ang = mesh.userData.centerDir.angleTo(fwd) * R2D;
+    if (ang < 95) {
+      mesh.userData.lastSeen = now;
+      if (!mesh.userData.loading && !mesh.material.map) {
+        mesh.userData.loading = true;
+        new THREE.TextureLoader().load("textures/constellation-art/" + mesh.userData.img, function (t) {
+          t.anisotropy = 2;
+          mesh.material.map = t; mesh.material.needsUpdate = true;
+          mesh.visible = true; mesh.userData.loading = false;
+        });
+      } else if (mesh.material.map) mesh.visible = true;
+    } else if (mesh.material.map && now - mesh.userData.lastSeen > 30000) {
+      mesh.material.map.dispose();
+      mesh.material.map = null; mesh.material.needsUpdate = true;
+      mesh.visible = false;
+    }
+  });
+};
+
+SpaceMode.prototype.flashHint = function (text) {
+  var el = this.root.querySelector(".spm-hint");
+  if (!el) return;
+  var orig = el.textContent;
+  el.textContent = text;
+  setTimeout(function () { el.textContent = orig; }, 4000);
 };
 
 /* ------------------------------ selection ------------------------------ */
@@ -753,6 +902,12 @@ SpaceMode.prototype.loop = function () {
     self.applyCamera();
     if (self.bloomOn) self.composer.render(); else self.renderer.render(self.scene, self.camera);
     self.drawOverlay();
+    // art texture management, throttled (H12)
+    var nowMs = Date.now();
+    if (self.artGroup && nowMs - (self._artSweepAt || 0) > 1000) {
+      self._artSweepAt = nowMs;
+      self.artSweep();
+    }
     // bloom degradation: sustained slow frames -> render direct
     var dt = performance.now() - t0;
     self.frameTimes.push(dt);
@@ -856,6 +1011,18 @@ SpaceMode.prototype.dispose = function () {
 
 export var _debug = {
   session: function () { return session; },
+  three: function () { return THREE; },
+  artInfo: function () {
+    if (!session || !session.artGroup) return null;
+    var loaded = 0;
+    session.artGroup.children.forEach(function (m) { if (m.material.map) loaded++; });
+    return { figures: session.artGroup.children.length, texturesLoaded: loaded, visible: session.artGroup.visible };
+  },
+  enableArt: function () { if (session) { session.flags.art = true; session.enableArt(); } },
+  artSweep: function () { if (session) session.artSweep(); },
+  gyroDir: function () { // current camera forward (scene coords) for continuity checks
+    return session && session.camera.getWorldDirection(new THREE.Vector3()).toArray().map(function (x) { return +x.toFixed(5); });
+  },
   aimAt: function (raH, decD) {
     if (!session) return;
     session.lookMode = "drag"; session.syncLookBtn();
