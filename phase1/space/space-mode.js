@@ -526,45 +526,22 @@ SpaceMode.prototype.updatePlanets = function () {
 
 /* ----------------------------- look/camera ----------------------------- */
 
-/* H12 gimbal-lock fix. The old gyro path decomposed the phone pose into
-   compass-az + (beta-90) altitude against a fixed up vector; near the zenith
-   the compass heading is undefined and flips 180°, so the view "fought" and
-   snapped. The camera is now driven by the device's FULL orientation as a
-   quaternion built from raw alpha/beta/gamma + screen angle (the standard
-   'YXZ' + back-camera construction) — no pole singularity, so panning from
-   horizon over the zenith to the other horizon is continuous. Absolute
-   azimuth (iOS alpha is arbitrary-origin) comes from a slowly-adapted offset
-   calibrated against webkitCompassHeading ONLY while pointing within 45° of
-   the horizon, where the compass is trustworthy. Away from the poles this
-   reduces exactly to the old az/alt mapping (verified algebraically and in
-   tests), plus correct roll for free. */
-var _qEul = new THREE.Euler();
-var _qDev = new THREE.Quaternion();
-var _qScr = new THREE.Quaternion();
-var _Q_BACK = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)); // -90° about X: look out the back camera
-var _Z_AXIS = new THREE.Vector3(0, 0, 1);
-var _fLoc = new THREE.Vector3(), _uLoc = new THREE.Vector3();
-function angDiffDeg(a, b) { var d = (a - b) % 360; if (d > 180) d -= 360; if (d < -180) d += 360; return d; }
-function rotY(v, th) {
-  var c = Math.cos(th), s = Math.sin(th);
-  var x = v.x * c + v.z * s, z = -v.x * s + v.z * c;
-  v.x = x; v.z = z;
-}
-
-// local device-world (Y=up) -> ENU -> astronomy HOR (N,-E,U) -> EQJ -> scene
-SpaceMode.prototype.lToScene = function (vL) {
-  var eq = A.RotateVector(this._horRot, new A.Vector(-vL.z, vL.x, vL.y, null));
-  return new THREE.Vector3(eq.x, eq.z, -eq.y).normalize();
-};
-
+/* H13: the H12 quaternion look-around regressed the horizontal axis on
+   device (left/right inverted — its east/west frame mapping carried a sign
+   error — and the per-frame compass-offset filter amplified compass noise
+   into visible jitter). Per the H13 handoff, the pre-H12 az/alt path below
+   is restored BYTE-EXACTLY from commit cbfd423 (it was world-locked, 1:1,
+   correct-direction, and smoothed via the AR handler's shared view state).
+   The original vertical pole-flip is instead fixed minimally at the shared
+   source: the AR orientation handler now clamps altitude to ±89° so the
+   view can never cross the pole and invert (see index.html onOrientation). */
 SpaceMode.prototype.applyCamera = function () {
   var dir, up;
   var view = this.opts.getView ? this.opts.getView() : null;
   var obs = this.opts.getObserver ? this.opts.getObserver() : null;
-  var gyroOk = this.lookMode === "gyro" && view && view.az != null && obs;
-  if (gyroOk) {
-    // horizon->EQJ at SIM time (recomputed ~1/s, or immediately when sim
-    // time moves fast, so time travel wheels the sky in gyro look too)
+  if (this.lookMode === "gyro" && view && view.az != null && obs) {
+    // horizon az/alt -> EQJ at SIM time (recomputed ~1/s, or immediately when
+    // sim time moves fast, so time travel wheels the sky in gyro look too)
     var now = Date.now();
     var simMs = window.SimClock ? window.SimClock.ms() : now;
     if (!this._horRot || now - this._horRotAt > 1000 ||
@@ -572,35 +549,11 @@ SpaceMode.prototype.applyCamera = function () {
       this._horRot = A.Rotation_HOR_EQJ(A.MakeTime(window.SimClock ? window.SimClock.now() : new Date()), obs);
       this._horRotAt = now; this._horRotSimMs = simMs;
     }
-  }
-  if (gyroOk && view.alpha != null && view.beta != null && view.gamma != null) {
-    // quaternion path (no gimbal lock)
-    _qEul.set(view.beta * D2R, view.alpha * D2R, -view.gamma * D2R, "YXZ");
-    _qDev.setFromEuler(_qEul)
-      .multiply(_Q_BACK)
-      .multiply(_qScr.setFromAxisAngle(_Z_AXIS, -(view.screen || 0) * D2R));
-    _fLoc.set(0, 0, -1).applyQuaternion(_qDev);
-    _uLoc.set(0, 1, 0).applyQuaternion(_qDev);
-    // calibrate the alpha yaw origin against the compass, near horizon only
-    var azQ = Math.atan2(-_fLoc.x, -_fLoc.z) * R2D;
-    var altQ = Math.asin(THREE.MathUtils.clamp(_fLoc.y, -1, 1)) * R2D;
-    if (view.compass != null && Math.abs(altQ) < 45) {
-      var target = angDiffDeg(view.az - azQ, 0);
-      if (this._azOff == null) this._azOff = target;
-      else this._azOff += angDiffDeg(target, this._azOff) * 0.02;
-    } else if (this._azOff == null) {
-      this._azOff = 0; // Android absolute alpha: already north-referenced
-    }
-    var off = this._azOff * D2R;
-    rotY(_fLoc, off); rotY(_uLoc, off);
-    dir = this.lToScene(_fLoc);
-    up = this.lToScene(_uLoc);
-  } else if (gyroOk) {
-    // fallback (raw angles unavailable): original az/alt mapping
     var az = view.az * D2R, alt = view.alt * D2R;
+    // ENU -> astronomy HOR frame (x=N, y=W, z=Up)
     var hor = { x: Math.cos(alt) * Math.cos(az), y: -Math.cos(alt) * Math.sin(az), z: Math.sin(alt) };
-    var eq2 = A.RotateVector(this._horRot, new A.Vector(hor.x, hor.y, hor.z, null));
-    dir = toScene(eq2).normalize();
+    var eq = A.RotateVector(this._horRot, new A.Vector(hor.x, hor.y, hor.z, null));
+    dir = toScene(eq).normalize();
     var zen = A.RotateVector(this._horRot, new A.Vector(0, 0, 1, null));
     up = toScene(zen).normalize();
   } else {

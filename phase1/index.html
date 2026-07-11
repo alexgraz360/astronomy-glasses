@@ -976,15 +976,11 @@ window.SimClock = (function () {
     if (rawHeading == null || e.beta == null) return;
     if (!oriSeen) { oriSeen = true; setPill(els["st-ori"], "good", "ORI live"); }
 
-    // H12: raw full orientation for Space Mode's quaternion camera (the
-    // az/alt decomposition below gimbal-locks near the zenith; the raw
-    // angles let Space Mode build a singularity-free rotation)
-    view.alpha = e.alpha; view.beta = e.beta; view.gamma = e.gamma;
-    view.compass = (typeof e.webkitCompassHeading === "number" && !isNaN(e.webkitCompassHeading)) ? e.webkitCompassHeading : null;
-    view.screen = (window.screen && screen.orientation && typeof screen.orientation.angle === "number")
-      ? screen.orientation.angle : (typeof window.orientation === "number" ? window.orientation : 0);
-
-    var rawAlt = e.beta - 90; // portrait: camera altitude (see convention block)
+    // H13: altitude clamped to ±89° so the look direction can never cross
+    // the zenith/nadir pole and invert (the original H12 bug), while the
+    // horizontal compass path stays exactly as it always was. Shared by AR
+    // and Space Mode (both read this smoothed view state).
+    var rawAlt = Math.max(-89, Math.min(89, e.beta - 90)); // portrait: camera altitude
     if (view.az == null) { view.az = rawHeading; view.alt = rawAlt; return; }
     view.az = wrap360(view.az + angDiff(rawHeading, view.az) * SMOOTH);
     view.alt = view.alt + (rawAlt - view.alt) * SMOOTH;
