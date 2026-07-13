@@ -132,6 +132,17 @@ var PLANETS = {
 
 var CREDIT = "Textures © Solar System Scope, CC BY 4.0 (NASA-derived) · Ephemeris: Astronomy Engine (MIT) · three.js r185 (MIT)";
 
+/* H14 Deep Time / Eras: curated epochs per body, from data/deep-time.json.
+   COMPLETELY separate from SimClock — no positions are computed; selecting
+   an era only morphs appearance (procedural shader params) and swaps in
+   sourced facts with confidence tags. */
+var ERAS_BODIES = { Mars: 1, Saturn: 1, Sun: 1, Earth: 1 };
+var deepTimePromise = null;
+function loadDeepTime() {
+  if (!deepTimePromise) deepTimePromise = fetch("data/deep-time.json").then(function (r) { return r.json(); });
+  return deepTimePromise;
+}
+
 /* ============================== shaders ============================== */
 
 var PLANET_VERT = `
@@ -157,14 +168,24 @@ var PLANET_FRAG = `
   uniform float ambient;
   uniform float limbDarken;
   uniform vec3 tint;
+  /* H14 Deep Time era morph uniforms — all no-ops at their defaults
+     (tint (1,1,1)/mix 0, white 0, ocean 0, desat 0, nightMul 1, ringMul 1)
+     so present-day rendering is pixel-identical when Eras is unused. */
+  uniform vec3 eraTintColor;
+  uniform float eraTintMix;
+  uniform float eraWhite;
+  uniform float eraOcean;
+  uniform float eraDesat;
   #ifdef HAS_NIGHT
     uniform sampler2D nightMap;
+    uniform float eraNightMul;
   #endif
   #ifdef HAS_RINGSHADOW
     uniform sampler2D ringMap;
     uniform vec3 poleDir;
     uniform float ringInner;
     uniform float ringOuter;
+    uniform float eraRingMul;
   #endif
   varying vec3 vNormalW;
   varying vec3 vPosW;
@@ -175,6 +196,16 @@ var PLANET_FRAG = `
     float ndotl = dot(N, sunDir);
     float day = smoothstep(-0.03, 0.14, ndotl);
     vec3 base = texture2D(map, vUv).rgb * tint;
+    /* era: schematic ocean keyed to dark (lowland) albedo with a northern
+       bias — an artist's-impression wet Mars, labeled as such in the UI */
+    if (eraOcean > 0.001) {
+      float lum0 = dot(base, vec3(0.3333));
+      float northBias = smoothstep(0.42, 0.72, vUv.y);
+      float lowland = smoothstep(0.5, 0.25, lum0);
+      float om = clamp(lowland * 0.75 + northBias * 0.55, 0.0, 1.0) * eraOcean;
+      base = mix(base, vec3(0.07, 0.18, 0.38), om);
+    }
+    if (eraDesat > 0.001) base = mix(base, vec3(dot(base, vec3(0.3333))), eraDesat);
     #ifdef HAS_RINGSHADOW
       float sPole = dot(sunDir, poleDir);
       if (abs(sPole) > 1e-4) {
@@ -184,7 +215,7 @@ var PLANET_FRAG = `
           float r = length(hit);
           if (r > ringInner && r < ringOuter) {
             float a = texture2D(ringMap, vec2((r - ringInner) / (ringOuter - ringInner), 0.5)).a;
-            day *= 1.0 - 0.88 * a;
+            day *= 1.0 - 0.88 * a * eraRingMul;
           }
         }
       }
@@ -193,12 +224,14 @@ var PLANET_FRAG = `
     #ifdef HAS_NIGHT
       vec3 lights = texture2D(nightMap, vUv).rgb;
       float night = 1.0 - smoothstep(-0.12, 0.05, ndotl);
-      col += lights * vec3(1.0, 0.92, 0.75) * night * 1.15;
+      col += lights * vec3(1.0, 0.92, 0.75) * night * 1.15 * eraNightMul;
       /* subtle ocean glint: day map water is dark + blue-dominant */
       float water = smoothstep(0.05, 0.25, base.b - base.r);
       vec3 H = normalize(sunDir + V);
       col += water * day * pow(max(dot(N, H), 0.0), 60.0) * vec3(0.35);
     #endif
+    col = mix(col, col * eraTintColor, eraTintMix);
+    col = mix(col, vec3(0.93, 0.96, 1.02) * (ambient + (1.0 - ambient) * day), eraWhite);
     if (limbDarken > 0.0) {
       col *= mix(1.0, pow(max(dot(N, V), 0.0), 0.55), limbDarken);
     }
@@ -229,13 +262,14 @@ var ATMO_FRAG = `
 var CLOUD_FRAG = `
   uniform sampler2D map;
   uniform vec3 sunDir;
+  uniform float eraCloudMul; // H14: era cloud-cover multiplier (1 = today)
   varying vec3 vNormalW;
   varying vec3 vPosW;
   varying vec2 vUv;
   void main() {
     float c = texture2D(map, vUv).r;
     float day = smoothstep(-0.05, 0.15, dot(normalize(vNormalW), sunDir));
-    gl_FragColor = vec4(vec3(1.0), c * (0.06 + 0.94 * day) * 0.92);
+    gl_FragColor = vec4(vec3(1.0), c * (0.06 + 0.94 * day) * 0.92 * eraCloudMul);
   }
 `;
 
@@ -255,6 +289,7 @@ var RING_FRAG = `
   uniform sampler2D map;
   uniform vec3 sunDir;
   uniform vec3 poleDir;
+  uniform float eraRingMul; // H14: 1 = today; ->0 as ring rain drains them
   varying vec2 vUv;
   varying vec3 vPosW;
   void main() {
@@ -272,7 +307,9 @@ var RING_FRAG = `
       shadow = 0.06 + 0.94 * smoothstep(0.98, 1.12, length(perp));
     }
     vec3 col = tex.rgb * (0.18 + 0.82 * lit * shadow);
-    gl_FragColor = vec4(col, tex.a);
+    /* H14: inner rings drain first (ring rain), per the cited science */
+    float eraFade = mix(eraRingMul * eraRingMul, eraRingMul, vUv.x);
+    gl_FragColor = vec4(col, tex.a * eraFade);
   }
 `;
 
@@ -390,7 +427,24 @@ Dashboard.prototype.buildDom = function () {
       ".pdb-info td:last-child{text-align:right;font-family:'SF Mono',ui-monospace,Menlo,monospace;color:#e6ebff;}",
       ".pdb-credit{font-size:10px;color:#5c6480;margin-top:8px;line-height:1.4;}",
       ".pdb-spin{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#8a93b2;font-size:13px;z-index:2;background:#000;}",
-      ".pdb-mlabel{position:absolute;z-index:2;font:600 10px -apple-system,sans-serif;color:#cfe0ff;text-shadow:0 1px 3px #000;pointer-events:none;transform:translate(-50%,-140%);white-space:nowrap;}"
+      ".pdb-mlabel{position:absolute;z-index:2;font:600 10px -apple-system,sans-serif;color:#cfe0ff;text-shadow:0 1px 3px #000;pointer-events:none;transform:translate(-50%,-140%);white-space:nowrap;}",
+      /* H14 Deep Time: amber/gold visual language, deliberately distinct from
+         the blue SimClock time bar so the two are never confused */
+      ".pdb-eras{position:absolute;left:10px;right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 118px);max-height:52vh;overflow-y:auto;-webkit-overflow-scrolling:touch;z-index:3;background:rgba(30,22,6,.94);border:1px solid #6b5416;border-radius:14px;padding:12px 14px;display:none;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);}",
+      ".pdb-eras h3{margin:0 0 4px;font-size:12px;color:#ffc94d;letter-spacing:1.2px;text-transform:uppercase;}",
+      ".pdb-eras .disc{font-size:10px;color:#b39b5e;line-height:1.45;margin-bottom:10px;}",
+      ".pdb-erastops{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;}",
+      ".pdb-erastop{padding:7px 12px;border-radius:999px;border:1px solid #6b5416;background:rgba(60,44,12,.6);color:#f0deb0;font-size:12px;font-weight:600;}",
+      ".pdb-erastop.now{border-color:#4fd08a;}",
+      ".pdb-erastop.active{background:#8a6a1a;color:#fff;border-color:#ffc94d;}",
+      ".pdb-erainfo{font-size:12px;line-height:1.55;color:#e8dcc0;}",
+      ".pdb-erainfo .etime{color:#ffc94d;font-weight:700;}",
+      ".pdb-conf{display:inline-block;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:6px;vertical-align:1px;}",
+      ".pdb-conf.established{background:rgba(79,208,138,.2);color:#4fd08a;}",
+      ".pdb-conf.projected{background:rgba(255,201,77,.2);color:#ffc94d;}",
+      ".pdb-conf.speculative{background:rgba(255,107,107,.2);color:#ff6b6b;}",
+      ".pdb-erasrc{font-size:10px;color:#b39b5e;margin-top:6px;line-height:1.45;}",
+      ".pdb-erabadge{display:none;margin-left:8px;font-size:10px;font-weight:800;color:#ffc94d;background:rgba(255,201,77,.15);padding:3px 8px;border-radius:999px;vertical-align:2px;}"
     ].join("\n");
     document.head.appendChild(st);
   }
@@ -400,6 +454,7 @@ Dashboard.prototype.buildDom = function () {
   root.innerHTML =
     '<div class="pdb-spin">Loading ' + this.name + "…</div>" +
     '<div class="pdb-top"><span class="pdb-title">' + cfg.glyph + " " + this.name + '</span>' +
+    '<span class="pdb-erabadge"></span>' +
     '<span class="pdb-sub">live · drag to orbit · pinch to zoom</span>' +
     '<button class="pdb-close" aria-label="Close">✕</button></div>' +
     '<div class="pdb-bot">' +
@@ -407,8 +462,10 @@ Dashboard.prototype.buildDom = function () {
     '<div class="pdb-timerow"><input type="range" min="-7" max="7" step="0.01" value="0"><button class="pdb-now">Now</button></div>' +
     '<div class="pdb-btnrow"><button class="pdb-chip pdb-i">ⓘ Info</button>' +
     (cfg.moons && cfg.moons.length ? '<button class="pdb-chip pdb-scale">Spacing: enhanced</button>' : "") +
+    (ERAS_BODIES[this.name] ? '<button class="pdb-chip pdb-erasbtn">⧖ Eras</button>' : "") +
     "</div></div>" +
-    '<div class="pdb-info"></div>';
+    '<div class="pdb-info"></div>' +
+    '<div class="pdb-eras"></div>';
   document.body.appendChild(root);
 
   this.el = {
@@ -420,8 +477,12 @@ Dashboard.prototype.buildDom = function () {
     now: root.querySelector(".pdb-now"),
     infoBtn: root.querySelector(".pdb-i"),
     scaleBtn: root.querySelector(".pdb-scale"),
-    info: root.querySelector(".pdb-info")
+    info: root.querySelector(".pdb-info"),
+    erasBtn: root.querySelector(".pdb-erasbtn"),
+    eras: root.querySelector(".pdb-eras"),
+    eraBadge: root.querySelector(".pdb-erabadge")
   };
+  if (this.el.erasBtn) this.el.erasBtn.addEventListener("click", function () { self.toggleEras(); });
 
   this.el.close.addEventListener("click", function () { closeDashboard(); });
   // slider = relative nudge of the global SimClock (±7 d per drag; recenters
@@ -445,7 +506,7 @@ Dashboard.prototype.buildDom = function () {
     var show = self.el.info.style.display !== "block";
     self.el.info.style.display = show ? "block" : "none";
     self.el.infoBtn.classList.toggle("on", show);
-    if (show) self.updateStats();
+    if (show) { self.updateStats(); self.el.eras.style.display = "none"; }
   });
   if (this.el.scaleBtn) this.el.scaleBtn.addEventListener("click", function () {
     self.scaleMode = self.scaleMode === "enhanced" ? "true" : "enhanced";
@@ -620,17 +681,22 @@ Dashboard.prototype.buildScene = function (tex) {
   var defines = {};
   if (cfg.nightMap) defines.HAS_NIGHT = 1;
   if (cfg.rings) defines.HAS_RINGSHADOW = 1;
+  this.eraRingU = { value: 1 }; // shared by ring material + globe ring shadow (H14)
   var uniforms = {
     map: { value: tex.map }, sunDir: this.sunDirU,
     ambient: { value: cfg.unlit ? 1.0 : 0.045 }, // unlit = self-luminous (Sun)
-    limbDarken: { value: cfg.limbDarken || 0.0 }, tint: { value: new THREE.Vector3(1, 1, 1) }
+    limbDarken: { value: cfg.limbDarken || 0.0 }, tint: { value: new THREE.Vector3(1, 1, 1) },
+    // H14 era uniforms at their no-op defaults
+    eraTintColor: { value: new THREE.Vector3(1, 1, 1) }, eraTintMix: { value: 0 },
+    eraWhite: { value: 0 }, eraOcean: { value: 0 }, eraDesat: { value: 0 }
   };
-  if (cfg.nightMap) uniforms.nightMap = { value: tex.night };
+  if (cfg.nightMap) { uniforms.nightMap = { value: tex.night }; uniforms.eraNightMul = { value: 1 }; }
   if (cfg.rings) {
     uniforms.ringMap = { value: tex.ring };
     uniforms.poleDir = this.poleU;
     uniforms.ringInner = { value: cfg.rings.innerKm / cfg.radiusKm };
     uniforms.ringOuter = { value: cfg.rings.outerKm / cfg.radiusKm };
+    uniforms.eraRingMul = this.eraRingU;
   }
   this.globeMat = new THREE.ShaderMaterial({ vertexShader: PLANET_VERT, fragmentShader: PLANET_FRAG, uniforms: uniforms, defines: defines });
   this.globe = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 64), this.globeMat);
@@ -647,13 +713,22 @@ Dashboard.prototype.buildScene = function (tex) {
     var atmo = new THREE.Mesh(new THREE.SphereGeometry(1.035, 64, 48), am);
     atmo.scale.copy(this.globe.scale);
     this.scene.add(atmo);
+    this.atmo = atmo; this.atmoMat = am; // era morphs adjust these (H14)
   }
+  // present-day parameter baseline the era morphs return to (H14)
+  this.eraDefaults = {
+    atmoR: cfg.atmosphere ? cfg.atmosphere.color[0] : 0,
+    atmoG: cfg.atmosphere ? cfg.atmosphere.color[1] : 0,
+    atmoB: cfg.atmosphere ? cfg.atmosphere.color[2] : 0,
+    atmoStr: cfg.atmosphere ? cfg.atmosphere.strength : 0,
+    ambient: cfg.unlit ? 1.0 : 0.045
+  };
 
   // Earth clouds
   if (cfg.cloudMap) {
     var cm = new THREE.ShaderMaterial({
       vertexShader: PLANET_VERT, fragmentShader: CLOUD_FRAG,
-      uniforms: { map: { value: tex.cloud }, sunDir: this.sunDirU },
+      uniforms: { map: { value: tex.cloud }, sunDir: this.sunDirU, eraCloudMul: { value: 1 } },
       transparent: true, depthWrite: false
     });
     this.clouds = new THREE.Mesh(new THREE.SphereGeometry(1.008, 96, 64), cm);
@@ -672,7 +747,7 @@ Dashboard.prototype.buildScene = function (tex) {
     }
     var rm = new THREE.ShaderMaterial({
       vertexShader: RING_VERT, fragmentShader: RING_FRAG,
-      uniforms: { map: { value: tex.ring }, sunDir: this.sunDirU, poleDir: this.poleU },
+      uniforms: { map: { value: tex.ring }, sunDir: this.sunDirU, poleDir: this.poleU, eraRingMul: this.eraRingU },
       side: THREE.DoubleSide, transparent: true, depthWrite: false
     });
     this.rings = new THREE.Mesh(rg, rm);
@@ -808,6 +883,133 @@ Dashboard.prototype.updateStats = function () {
     '<div class="pdb-credit">' + CREDIT + "</div>";
 };
 
+/* ---------- Deep Time / Eras (H14) ---------- */
+
+Dashboard.prototype.toggleEras = function () {
+  var self = this;
+  var show = this.el.eras.style.display !== "block";
+  this.el.eras.style.display = show ? "block" : "none";
+  if (show) this.el.info.style.display = "none"; // one bottom panel at a time
+  if (!show) return;
+  loadDeepTime().then(function (dt) {
+    if (self.disposed) return;
+    self.eraList = dt.bodies[self.name] || [];
+    self.eraDisclaimer = dt.meta.disclaimer;
+    self.renderEras();
+  }).catch(function (e) {
+    self.el.eras.innerHTML = "<h3>Deep Time</h3><div class='disc'>failed to load era data: " + e + "</div>";
+  });
+};
+
+Dashboard.prototype.renderEras = function () {
+  var self = this;
+  var active = this.activeEra;
+  var h = "<h3>⧖ Deep Time — " + this.name + "</h3>" +
+    '<div class="disc">Scientific reconstruction / projection — separate from the live ephemeris clock. Visuals are artist\'s impressions guided by the cited sources.</div>' +
+    '<div class="pdb-erastops">' +
+    this.eraList.map(function (ep, i) {
+      var cls = "pdb-erastop" + (ep.now ? " now" : "") +
+        ((active ? active.id === ep.id : ep.now) ? " active" : "");
+      return '<button class="' + cls + '" data-era="' + i + '">' + (ep.now ? "⦿ " : "") + ep.name + "</button>";
+    }).join("") +
+    "</div><div class='pdb-erainfo'></div>";
+  this.el.eras.innerHTML = h;
+  Array.prototype.forEach.call(this.el.eras.querySelectorAll(".pdb-erastop"), function (btn) {
+    btn.addEventListener("click", function () {
+      self.applyEra(self.eraList[parseInt(btn.getAttribute("data-era"), 10)]);
+      self.renderEras();
+    });
+  });
+  var cur = active || this.eraList.filter(function (e) { return e.now; })[0];
+  if (cur) {
+    this.el.eras.querySelector(".pdb-erainfo").innerHTML =
+      "<b>" + cur.name + "</b>" +
+      '<span class="pdb-conf ' + cur.confidence.toLowerCase() + '">' + cur.confidence + "</span><br>" +
+      '<span class="etime">' + cur.time + "</span><br>" + cur.desc +
+      '<div class="pdb-erasrc">Source: ' + cur.source + "</div>";
+  }
+};
+
+Dashboard.prototype.applyEra = function (ep) {
+  var d = this.eraDefaults || { atmoR: 0, atmoG: 0, atmoB: 0, atmoStr: 0, ambient: 0.045 };
+  var p = ep.params || {};
+  this.eraTgt = {
+    tintR: p.tintColor ? p.tintColor[0] : 1, tintG: p.tintColor ? p.tintColor[1] : 1, tintB: p.tintColor ? p.tintColor[2] : 1,
+    tintMix: p.tintMix || 0, white: p.white || 0, ocean: p.ocean || 0, desat: p.desat || 0,
+    night: p.night != null ? p.night : 1, ringMul: p.ringMul != null ? p.ringMul : 1,
+    cloudMul: p.cloud != null ? p.cloud : 1, scale: p.scale || 1, camMul: p.camMul || 1,
+    atmoR: p.atmoColor ? p.atmoColor[0] : d.atmoR, atmoG: p.atmoColor ? p.atmoColor[1] : d.atmoG,
+    atmoB: p.atmoColor ? p.atmoColor[2] : d.atmoB,
+    atmoStr: p.atmoStrength != null ? p.atmoStrength : d.atmoStr,
+    ambient: p.ambient != null ? p.ambient : d.ambient
+  };
+  if (!this.eraCur) { // first use: start from present-day neutral
+    this.eraCur = {
+      tintR: 1, tintG: 1, tintB: 1, tintMix: 0, white: 0, ocean: 0, desat: 0,
+      night: 1, ringMul: 1, cloudMul: 1, scale: 1, camMul: 1,
+      atmoR: d.atmoR, atmoG: d.atmoG, atmoB: d.atmoB, atmoStr: d.atmoStr, ambient: d.ambient
+    };
+  }
+  this.activeEra = ep;
+  // wet-Mars clouds: build a cloud layer lazily from the vendored Earth cloud map
+  if (this.eraTgt.cloudMul > 0.01 && !this.clouds && !this.cfg.cloudMap && !ep.now) this.buildEraClouds();
+  var isNow = !!ep.now;
+  this.el.eraBadge.style.display = isNow ? "none" : "inline-block";
+  this.el.eraBadge.textContent = "⧖ " + ep.name.toUpperCase() + " · reconstruction";
+  if (this.el.erasBtn) this.el.erasBtn.classList.toggle("on", !isNow);
+};
+
+Dashboard.prototype.buildEraClouds = function () {
+  var self = this;
+  if (this._eraCloudsLoading) return;
+  this._eraCloudsLoading = true;
+  new THREE.TextureLoader().load(TEX + "2k_earth_clouds.jpg", function (t) {
+    if (self.disposed) { t.dispose(); return; }
+    t.anisotropy = 4;
+    var cm = new THREE.ShaderMaterial({
+      vertexShader: PLANET_VERT, fragmentShader: CLOUD_FRAG,
+      uniforms: { map: { value: t }, sunDir: self.sunDirU, eraCloudMul: { value: 0 } },
+      transparent: true, depthWrite: false
+    });
+    self.clouds = new THREE.Mesh(new THREE.SphereGeometry(1.008, 96, 64), cm);
+    self.clouds.scale.copy(self.globe.scale);
+    self.clouds.quaternion.copy(self.globe.quaternion);
+    self.scene.add(self.clouds);
+  });
+};
+
+/* Eased per-frame morph toward the selected era's parameters. Runs only
+   after Eras has been used at least once — zero overhead otherwise. */
+Dashboard.prototype.eraStep = function () {
+  var c = this.eraCur, t = this.eraTgt, k;
+  for (k in t) c[k] += (t[k] - c[k]) * 0.08;
+  var u = this.globeMat.uniforms;
+  u.eraTintColor.value.set(c.tintR, c.tintG, c.tintB);
+  u.eraTintMix.value = c.tintMix;
+  u.eraWhite.value = c.white;
+  u.eraOcean.value = c.ocean;
+  u.eraDesat.value = c.desat;
+  u.ambient.value = c.ambient;
+  if (u.eraNightMul) u.eraNightMul.value = c.night;
+  this.eraRingU.value = c.ringMul;
+  if (this.clouds && this.clouds.material.uniforms.eraCloudMul) {
+    this.clouds.material.uniforms.eraCloudMul.value = c.cloudMul;
+  }
+  if (this.atmoMat) {
+    this.atmoMat.uniforms.glowColor.value.set(c.atmoR, c.atmoG, c.atmoB);
+    this.atmoMat.uniforms.strength.value = c.atmoStr;
+  }
+  var s = c.scale, flat = this.cfg.flat;
+  this.globe.scale.set(s, flat * s, s);
+  if (this.atmo) this.atmo.scale.set(s, flat * s, s);
+  if (this.clouds) this.clouds.scale.set(s, flat * s, s);
+  var newBase = (this.cfg.camDist || 4.2) * c.camMul;
+  if (Math.abs(newBase - this.baseDist) > 1e-4) {
+    this.dist *= newBase / this.baseDist; // preserve the user's zoom ratio
+    this.baseDist = newBase;
+  }
+};
+
 /* ---------- frame loop ---------- */
 
 Dashboard.prototype.loop = function () {
@@ -820,6 +1022,8 @@ Dashboard.prototype.loop = function () {
     if (window.SimClock && Math.abs(window.SimClock.ms() - (self.lastSimMs || 0)) > 15000) {
       self.updateEphemeris();
     }
+    // H14: eased Deep Time morph (only after Eras has been used)
+    if (self.eraCur) self.eraStep();
     // drag momentum
     if (Math.abs(self.velYaw) > 1e-4 || Math.abs(self.velPitch) > 1e-4) {
       self.yaw += self.velYaw; self.pitch = THREE.MathUtils.clamp(self.pitch + self.velPitch, -1.45, 1.45);
@@ -887,5 +1091,19 @@ export var _debug = {
   setOffset: function (d) { // now nudges the GLOBAL clock (H08)
     if (window.SimClock) window.SimClock.step(d * 86400000);
     if (session) session.updateEphemeris();
+  },
+  applyEraById: function (id) { // H14 test hook
+    if (!session) return Promise.resolve(false);
+    return loadDeepTime().then(function (dt) {
+      var ep = (dt.bodies[session.name] || []).filter(function (e) { return e.id === id; })[0];
+      if (ep) session.applyEra(ep);
+      return !!ep;
+    });
+  },
+  eraState: function () {
+    if (!session || !session.eraCur) return null;
+    return { active: session.activeEra && session.activeEra.id,
+             cur: JSON.parse(JSON.stringify(session.eraCur)),
+             tgt: JSON.parse(JSON.stringify(session.eraTgt)) };
   }
 };

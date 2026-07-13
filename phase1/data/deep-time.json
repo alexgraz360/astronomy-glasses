@@ -1,0 +1,131 @@
+{
+  "meta": {
+    "feature": "Deep Time / Eras (H14)",
+    "disclaimer": "Curated scientific reconstructions and projections. Entirely separate from the live ephemeris clock: planetary positions are only computable ~±3,000 years from now, so these eras morph the APPEARANCE and swap in sourced facts — they do not compute positions.",
+    "confidence_scale": ["Established", "Projected", "Speculative"],
+    "morphs": "Procedural only (shader tints, whitening, luminance-keyed ocean overlay, ring-opacity fade, scale changes, cloud/atmosphere parameter blends of existing vendored textures). No new image assets. Visuals are artist's impressions guided by the cited science.",
+    "sources_verified": "2026-07-11: Saturn ring-rain figures verified against the linked NASA article; remaining values are standard published figures cited per epoch."
+  },
+  "bodies": {
+    "Mars": [
+      {
+        "id": "noachian", "name": "Noachian Mars", "time": "~4.1–3.7 billion years ago",
+        "confidence": "Established",
+        "source": "NASA Mars Exploration Program; Carr & Head (2010), 'Geologic history of Mars', EPSL",
+        "desc": "Mars at its most Earth-like: a thicker atmosphere, rain-carved valley networks, crater lakes, and possibly a sea covering much of the northern lowlands. The clay minerals rovers find today formed in this water-rich era. Ocean extent shown is an artist's impression — its existence is still debated.",
+        "params": { "ocean": 0.85, "tintColor": [0.92, 0.88, 0.82], "tintMix": 0.35, "cloud": 0.55, "atmoColor": [0.5, 0.65, 0.95], "atmoStrength": 0.5 }
+      },
+      {
+        "id": "hesperian", "name": "Hesperian Mars", "time": "~3.7–3.0 billion years ago",
+        "confidence": "Established",
+        "source": "NASA Mars Exploration Program; Carr & Head (2010)",
+        "desc": "The great drying. Volcanoes resurfaced whole regions, catastrophic floods carved the giant outflow channels, and the remaining water turned acidic and sulfate-rich as the atmosphere thinned.",
+        "params": { "ocean": 0.3, "tintMix": 0.12, "tintColor": [0.95, 0.9, 0.85], "cloud": 0.2, "atmoColor": [0.7, 0.65, 0.7], "atmoStrength": 0.35 }
+      },
+      {
+        "id": "amazonian", "name": "Amazonian Mars (Now)", "time": "~3.0 billion years ago → today", "now": true,
+        "confidence": "Established",
+        "source": "NASA Mars Exploration Program",
+        "desc": "Today's Mars: cold, hyper-arid, a thin CO₂ atmosphere under 1% of Earth's pressure, global dust, and water surviving as polar ice and subsurface deposits.",
+        "params": {}
+      }
+    ],
+    "Saturn": [
+      {
+        "id": "rings-now", "name": "Rings today (Now)", "time": "Now", "now": true,
+        "confidence": "Established",
+        "source": "NASA/Cassini; O'Donoghue et al. (2019), Icarus — rings likely young (≲100 Myr, debated)",
+        "desc": "The full bright ring system — mostly water ice, thinner than a sheet of paper relative to its size. Cassini-era evidence suggests the rings are geologically YOUNG, likely less than ~100 million years old, though their age is still debated.",
+        "params": {}
+      },
+      {
+        "id": "rings-fading", "name": "Rings fading", "time": "~+100–200 million years (projected)",
+        "confidence": "Projected",
+        "source": "NASA (2018): 'Saturn is Losing Its Rings at Worst-Case-Scenario Rate'; O'Donoghue et al. (2019), Icarus",
+        "desc": "'Ring rain': the magnetic field pulls charged ice grains down into Saturn's atmosphere — enough water to fill an Olympic pool every half hour. The inner rings drain first. The mechanism is measured; the exact timing is a broad range.",
+        "params": { "ringMul": 0.4 }
+      },
+      {
+        "id": "ringless", "name": "Ringless Saturn", "time": "~+100–300 million years, possibly longer (projected)",
+        "confidence": "Projected",
+        "source": "NASA (2018) / O'Donoghue et al. (2019): <100 Myr worst case, ~300 Myr from ring rain alone; some studies argue longer — timing debated",
+        "desc": "Saturn without its rings — a plain gas giant, as it likely was for most of its 4.5-billion-year history if the rings really are young. Future observers may know the rings only from our era's photographs.",
+        "params": { "ringMul": 0.0 }
+      }
+    ],
+    "Sun": [
+      {
+        "id": "protosun", "name": "Young Sun", "time": "~4.6 billion years ago",
+        "confidence": "Established",
+        "source": "NASA Sun overview; standard solar-system formation chronology (CAI ages ~4.567 Gyr)",
+        "desc": "The newborn Sun, freshly ignited inside its collapsing gas cloud: about 30% dimmer than today but far more magnetically violent, flaring constantly while the planets assembled from the surrounding disk.",
+        "params": { "scale": 1.12, "tintColor": [1.0, 0.62, 0.35], "tintMix": 0.6, "desat": 0.3, "atmoColor": [1.0, 0.55, 0.25], "atmoStrength": 1.0 }
+      },
+      {
+        "id": "sun-now", "name": "Middle age (Now)", "time": "Now (~4.6 billion years old)", "now": true,
+        "confidence": "Established",
+        "source": "NASA Sun fact sheet",
+        "desc": "A stable G2 main-sequence star, roughly halfway through its hydrogen-burning life. It has already brightened ~30% since its youth and continues to brighten slowly.",
+        "params": {}
+      },
+      {
+        "id": "sun-1gyr", "name": "Brighter Sun", "time": "~+1 billion years",
+        "confidence": "Projected",
+        "source": "Standard stellar evolution; Kasting (1988) moist-greenhouse threshold; Schröder & Connon Smith (2008), MNRAS",
+        "desc": "About 10% more luminous than today — enough, models project, to push Earth into a moist greenhouse where the oceans slowly evaporate. The Sun itself looks only subtly different: slightly larger, slightly whiter.",
+        "params": { "scale": 1.08, "tintColor": [1.05, 1.02, 0.95], "tintMix": 0.35 }
+      },
+      {
+        "id": "red-giant", "name": "Red giant", "time": "~+5–6 billion years",
+        "confidence": "Projected",
+        "source": "Schröder & Connon Smith (2008), MNRAS; NASA/ESA stellar evolution",
+        "desc": "Hydrogen exhausted, the Sun swells hundreds of times wider, engulfing Mercury and Venus — Earth's survival is genuinely uncertain. Shown here far smaller than true scale: a real red giant Sun would reach roughly toward Earth's orbit.",
+        "params": { "scale": 3.4, "camMul": 2.6, "tintColor": [1.25, 0.5, 0.22], "tintMix": 0.8, "desat": 0.55, "atmoColor": [1.0, 0.35, 0.12], "atmoStrength": 1.2 }
+      },
+      {
+        "id": "white-dwarf", "name": "White dwarf", "time": "~+7–8 billion years",
+        "confidence": "Projected",
+        "source": "Standard stellar evolution (NASA/ESA); Schröder & Connon Smith (2008)",
+        "desc": "After shedding its outer layers as a planetary nebula, the Sun's exposed core remains: an Earth-sized ember of crystallizing carbon and oxygen, initially white-hot, cooling for eternity. Shown larger than true scale (a real white dwarf is ~100× smaller than the Sun).",
+        "params": { "scale": 0.28, "camMul": 0.75, "tintColor": [0.85, 0.95, 1.5], "tintMix": 0.85, "desat": 0.85, "white": 0.35, "atmoColor": [0.6, 0.8, 1.4], "atmoStrength": 0.7 }
+      }
+    ],
+    "Earth": [
+      {
+        "id": "hadean", "name": "Hadean Earth", "time": "~4.5 billion years ago",
+        "confidence": "Established",
+        "source": "USGS (age of Earth, 4.54 ± 0.05 Gyr); NASA — Moon-forming giant impact (Theia)",
+        "desc": "A world of magma. Shortly after Earth assembled, a Mars-sized body (Theia) struck it — the debris became the Moon, which loomed enormous in the sky over a glowing magma ocean. No continents, no oceans, no life.",
+        "params": { "tintColor": [1.35, 0.45, 0.2], "tintMix": 0.85, "desat": 0.6, "night": 0.0, "cloud": 0.0, "ambient": 0.4, "atmoColor": [1.0, 0.4, 0.15], "atmoStrength": 0.6 }
+      },
+      {
+        "id": "archean", "name": "Early oceans & first life", "time": "~4.0–3.5 billion years ago",
+        "confidence": "Established",
+        "source": "NASA Astrobiology; zircon evidence of early oceans (~4.0+ Gya); stromatolite fossils (~3.5 Gya)",
+        "desc": "A water world under an orange, oxygen-free sky: global oceans dotted with volcanic islands, tides far stronger under a much closer Moon, and — in those waters — the first microbial life.",
+        "params": { "tintColor": [0.55, 0.75, 1.15], "tintMix": 0.55, "desat": 0.35, "night": 0.0, "cloud": 1.2, "atmoColor": [0.9, 0.6, 0.35], "atmoStrength": 0.6 }
+      },
+      {
+        "id": "snowball", "name": "Snowball Earth", "time": "~2.4 billion & ~717–635 million years ago",
+        "confidence": "Established",
+        "source": "Huronian glaciation (~2.4 Gya) and Cryogenian Sturtian/Marinoan glaciations (~717–635 Mya) — established geology; fully global 'hard snowball' extent still debated",
+        "desc": "Ice from pole to pole — or nearly so. At least twice, runaway glaciation wrapped the planet in ice for millions of years; volcanic CO₂ eventually thawed it. The debate is whether a belt of open equatorial water ('slushball') survived.",
+        "params": { "white": 0.8, "night": 0.0, "cloud": 0.5, "atmoColor": [0.7, 0.85, 1.1], "atmoStrength": 0.5 }
+      },
+      {
+        "id": "earth-now", "name": "Earth today (Now)", "time": "Now", "now": true,
+        "confidence": "Established",
+        "source": "—",
+        "desc": "The only world known to host life — oceans, continents, an oxygen atmosphere, and city lights on the night side.",
+        "params": {}
+      },
+      {
+        "id": "earth-1gyr", "name": "Evaporating oceans", "time": "~+1 billion years",
+        "confidence": "Projected",
+        "source": "Kasting (1988) moist-greenhouse models; standard solar-brightening projections (Schröder & Connon Smith 2008)",
+        "desc": "The slowly brightening Sun tips Earth into a moist greenhouse: oceans evaporate into a thick steam atmosphere, water is lost to space, and the surface trends toward a hot desert world. Complex life's era ends long before the red-giant Sun arrives.",
+        "params": { "tintColor": [1.15, 0.88, 0.55], "tintMix": 0.6, "desat": 0.4, "night": 0.0, "cloud": 0.3, "ocean": 0.0, "atmoColor": [1.0, 0.8, 0.5], "atmoStrength": 0.55 }
+      }
+    ]
+  }
+}
