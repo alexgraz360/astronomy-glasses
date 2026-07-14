@@ -528,7 +528,6 @@ Dashboard.prototype.buildRenderer = function () {
   this.baseDist = this.cfg.camDist || 4.2;
   this.dist = this.baseDist;
   this.yaw = 0; this.pitch = 0;
-  this.velYaw = 0; this.velPitch = 0;
 
   this.onResize = function () {
     self.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -544,25 +543,23 @@ Dashboard.prototype.buildRenderer = function () {
   };
   this.renderer.domElement.addEventListener("webglcontextlost", this.onCtxLost);
 
-  // --- custom orbit controls (drag orbit + momentum, pinch/wheel zoom,
-  //     double-tap reset). Tailored for touch; avoids vendoring addons.
-  //     H15 adds a raw-pixel tap classifier on top: a short, near-still
-  //     touch is a TAP and hit-tests the moons; a real drag orbits as
-  //     before (orbit math unchanged). ---
-  // [H15 tap wiring DASH start]
+  // --- custom orbit controls — FROZEN (H16). Drag orbit, pinch/wheel
+  //     zoom, double-tap reset. THE ONE RULE: the view moves only while
+  //     input is active — H16 REMOVED the release momentum/glide (it was
+  //     the "view pulls toward objects" drift Alex saw on device).
+  //     Taps are handled by the shared RE_attachTap layer below, which
+  //     never touches this orbit state. Do not modify. ---
+  // [H16 orbit DASH start]
   var elc = this.renderer.domElement;
-  var drag = null, pinch = null, lastTap = 0, movedPx = 0, downAt = 0, lastTouchEnd = 0;
+  var drag = null, pinch = null, lastTap = 0;
   function pt(e, i) { return (e.touches && e.touches[i || 0]) || (e.changedTouches && e.changedTouches[i || 0]) || e; }
   this.onDown = function (e) {
-    if (!e.changedTouches && !e.touches && Date.now() - lastTouchEnd < 700) return; // synthetic mouse
     if (e.touches && e.touches.length === 2) {
       pinch = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
       drag = null; return;
     }
     var p = pt(e);
     drag = { x: p.clientX, y: p.clientY };
-    movedPx = 0; downAt = Date.now();
-    self.velYaw = self.velPitch = 0;
     var now = Date.now();
     if (now - lastTap < 320) self.resetView();
     lastTap = now;
@@ -576,23 +573,12 @@ Dashboard.prototype.buildRenderer = function () {
     }
     if (!drag) return;
     var p = pt(e);
-    movedPx += Math.abs(p.clientX - drag.x) + Math.abs(p.clientY - drag.y);
     var dx = (p.clientX - drag.x) / window.innerHeight * 2.6;
     var dy = (p.clientY - drag.y) / window.innerHeight * 2.6;
     self.yaw -= dx; self.pitch = THREE.MathUtils.clamp(self.pitch - dy, -1.45, 1.45);
-    self.velYaw = -dx; self.velPitch = -dy;
     drag = { x: p.clientX, y: p.clientY };
   };
-  this.onUp = function (e) {
-    if (e && e.changedTouches) lastTouchEnd = Date.now();
-    else if (Date.now() - lastTouchEnd < 700) { drag = null; pinch = null; return; }
-    var T = window.RE_TAP || { PX: 10, MS: 300 };
-    if (drag && e && movedPx < T.PX && (Date.now() - downAt) < T.MS) {
-      var p = pt(e);
-      if (p && p.clientX != null) self.tapMoon(p.clientX, p.clientY);
-    }
-    drag = null; pinch = null;
-  };
+  this.onUp = function () { drag = null; pinch = null; };
   this.onCancel = function () { drag = null; pinch = null; };
   this.onWheel = function (e) {
     e.preventDefault();
@@ -603,10 +589,14 @@ Dashboard.prototype.buildRenderer = function () {
   window.addEventListener("mouseup", this.onUp); elc.addEventListener("touchend", this.onUp);
   elc.addEventListener("touchcancel", this.onCancel);
   elc.addEventListener("wheel", this.onWheel, { passive: false });
-  // [H15 tap wiring DASH end]
+  // [H16 orbit DASH end]
+  // Tap layer (frozen, shared with AR + Space): hit-tests the moons only.
+  if (window.RE_attachTap) window.RE_attachTap(elc, function (x, y) {
+    return self.tapMoon(x, y);
+  });
 };
 
-Dashboard.prototype.resetView = function () { this.yaw = 0; this.pitch = 0; this.dist = this.baseDist; this.velYaw = this.velPitch = 0; };
+Dashboard.prototype.resetView = function () { this.yaw = 0; this.pitch = 0; this.dist = this.baseDist; };
 
 /* Home camera: the planet as seen from Earth (north up); Earth itself is
    seen from above the observer's GPS point. yaw/pitch orbit around that. */
@@ -920,10 +910,11 @@ var MOON_FACTS = {
 };
 
 /* Hit-test the rendered moons at their CURRENT projected positions.
-   Target radius = projected moon radius + margin, minimum 30 px. */
+   Target radius = projected moon radius + margin, minimum 30 px.
+   H16: returns the hit label for the debug readout, or null on no-hit. */
 Dashboard.prototype.tapMoon = function (x, y) {
-  if (window.RE_cardOpen && window.RE_cardOpen()) return; // card swallows taps
-  if (!this.moons || !this.moons.length || !this.scene) return;
+  if (window.RE_cardOpen && window.RE_cardOpen()) return null; // card swallows taps
+  if (!this.moons || !this.moons.length || !this.scene) return null;
   var v = new THREE.Vector3(), w = window.innerWidth, h = window.innerHeight;
   var best = null, bd = 1e9;
   for (var i = 0; i < this.moons.length; i++) {
@@ -937,14 +928,15 @@ Dashboard.prototype.tapMoon = function (x, y) {
     var d = Math.hypot(sx - x, sy - y);
     if (d < hitR && d < bd) { bd = d; best = m; }
   }
-  if (best) this.showMoonCard(best);
+  if (best) return this.showMoonCard(best);
+  return null;
 };
 
 Dashboard.prototype.showMoonCard = function (m) {
   var name = m.cfg.name;
-  if (name === "Moon" && window.RE_openDashboard) { window.RE_openDashboard("Moon"); return; }
+  if (name === "Moon" && window.RE_openDashboard) { window.RE_openDashboard("Moon"); return "Moon (dashboard)"; }
   var f = MOON_FACTS[name];
-  if (!f || !window.RE_showCard) return;
+  if (!f || !window.RE_showCard) return null;
   var tint = m.cfg.tint || [1, 1, 1];
   var rgb = "rgb(" + tint.map(function (x) { return Math.round(x * 230); }).join(",") + ")";
   window.RE_showCard({
@@ -959,6 +951,7 @@ Dashboard.prototype.showMoonCard = function (m) {
     desc: f.fact,
     credit: "Facts: NASA planetary/moon fact sheets · Rendered with a generic tinted surface (real per-moon maps are a later handoff)"
   });
+  return name;
 };
 
 /* ---------- Deep Time / Eras (H14) ---------- */
@@ -1102,12 +1095,8 @@ Dashboard.prototype.loop = function () {
     }
     // H14: eased Deep Time morph (only after Eras has been used)
     if (self.eraCur) self.eraStep();
-    // drag momentum
-    if (Math.abs(self.velYaw) > 1e-4 || Math.abs(self.velPitch) > 1e-4) {
-      self.yaw += self.velYaw; self.pitch = THREE.MathUtils.clamp(self.pitch + self.velPitch, -1.45, 1.45);
-      self.velYaw *= 0.93; self.velPitch *= 0.93;
-    }
-    if (self.clouds) self.clouds.rotation.y += 0.000045; // cosmetic slow drift
+    // H16 ONE RULE: no drag momentum — the camera never moves without input.
+    if (self.clouds) self.clouds.rotation.y += 0.000045; // cosmetic cloud-texture spin (not camera motion)
     self.applyCamera();
     // moon labels track their meshes
     var w = window.innerWidth, h = window.innerHeight;

@@ -194,6 +194,15 @@
   }
   .tbnote { color: var(--warn); font-size: 10px; text-align: center; }
 
+  /* H16 debug gesture readout: shows over AR (z20) and Space Mode (z35) */
+  #dbgline {
+    position: fixed; left: 10px; bottom: calc(env(safe-area-inset-bottom, 0px) + 46px);
+    z-index: 37; pointer-events: none;
+    font: 600 10px "SF Mono", ui-monospace, Menlo, monospace;
+    color: #9fe0b2; background: rgba(13, 17, 32, 0.75);
+    padding: 3px 9px; border-radius: 6px;
+  }
+
   /* Detail card (H09): one reusable view-only card for DSOs and stars.
      z 45 (H15): above dashboards (40) too, so moon cards opened from a
      dashboard are visible; the full-screen wrap swallows background taps. */
@@ -256,6 +265,7 @@
   <button id="btnNames" class="tbtn on">Names</button>
   <button id="btnArt" class="tbtn">Art</button>
   <button id="btnBelow" class="tbtn">Below</button>
+  <button id="btnDbg" class="tbtn on">Dbg</button>
 </div>
 
 <div id="targetsPanel" style="display:none;">
@@ -293,6 +303,8 @@
   </div>
   <span id="pointing">az &mdash; &middot; alt &mdash;</span>
 </div>
+
+<div id="dbgline" style="display:none;">gesture: &mdash;</div>
 
 <div id="cardWrap"><div id="card"></div></div>
 
@@ -389,10 +401,91 @@ window.SimClock = (function () {
   };
 })();
 
-/* H15: shared tap-vs-drag thresholds. A touch that moves less than PX raw
-   pixels AND lasts under MS milliseconds is a TAP; anything else is a
-   drag/look. One set of numbers for AR, Space Mode, and the dashboards. */
-window.RE_TAP = { PX: 10, MS: 300 };
+/* ======================= INTERACTION LAYER (H16) =======================
+   FROZEN after Alex's device sign-off — future handoffs must NOT modify
+   this block, the pan handlers in space-mode.js/planet-dashboard.js, or
+   applyCamera. Features integrate by passing hit-test callbacks to
+   RE_attachTap, never by rewriting gesture code.
+
+   The ONE RULE: the view moves only from active finger/gyro input and
+   stops the instant input stops. No momentum, no auto-centering, no
+   snap-to-object, no proximity fly-to. (A deliberate fly-to after a
+   confirmed TAP is allowed.)
+
+   Tap = NET DISPLACEMENT from touchstart < PX  AND  duration < MS.
+   Net displacement, NOT accumulated path length: a 120 Hz phone emits
+   dozens of sub-pixel tremor touchmoves during a normal tap, so H15's
+   accumulated-path metric classified every real tap as a drag — that is
+   what made "nothing tappable" on device while synthetic tests passed. */
+window.RE_TAP = { PX: 12, MS: 400 };
+
+/* Debug readout (H16): every gesture reports here so Alex can screenshot
+   what the classifier saw. Toggled by the Dbg toolbar button. */
+window.RE_dbgGesture = function (kind, px, ms, hit) {
+  var el = document.getElementById("dbgline");
+  if (!el) return;
+  el.textContent = kind + " " + px + "px " + ms + "ms" + (kind === "TAP" ? " → " + (hit || "no-hit") : "");
+};
+
+/* One shared tap layer for AR sky, Space Mode, and dashboards. Purely
+   additive: it registers its OWN listeners and never touches pan state.
+   onTap(x, y) runs the surface's existing hit-test and returns the hit
+   label (or null). iOS synthetic mouse events after a touch are
+   suppressed; multi-touch (pinch) is never a tap. */
+// [H16 tap layer start]
+window.RE_attachTap = function (el, onTap) {
+  var st = null, lastTouchEnd = 0;
+  function P(e) { return (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e; }
+  function begin(x, y) { st = { x0: x, y0: y, t0: Date.now(), maxDisp: 0, multi: false }; }
+  function track(x, y) {
+    if (!st) return;
+    var d = Math.hypot(x - st.x0, y - st.y0);
+    if (d > st.maxDisp) st.maxDisp = d;
+  }
+  function finish(x, y) {
+    if (!st) return;
+    var px = Math.round(st.maxDisp), ms = Date.now() - st.t0;
+    var isTap = !st.multi && st.maxDisp < window.RE_TAP.PX && ms < window.RE_TAP.MS;
+    st = null;
+    if (isTap) {
+      var hit = null;
+      try { hit = onTap(x, y); } catch (err) { hit = "err: " + err.message; }
+      window.RE_dbgGesture("TAP", px, ms, hit);
+    } else {
+      window.RE_dbgGesture("DRAG", px, ms, null);
+    }
+  }
+  el.addEventListener("touchstart", function (e) {
+    if (e.touches && e.touches.length > 1) { if (st) st.multi = true; return; }
+    var p = P(e);
+    begin(p.clientX, p.clientY);
+  }, { passive: true });
+  el.addEventListener("touchmove", function (e) {
+    if (e.touches && e.touches.length > 1) { if (st) st.multi = true; return; }
+    var p = P(e);
+    track(p.clientX, p.clientY);
+  }, { passive: true });
+  el.addEventListener("touchend", function (e) {
+    lastTouchEnd = Date.now();
+    if (e.touches && e.touches.length > 0) return; // a finger remains (pinch)
+    var p = P(e);
+    if (p && p.clientX != null) { track(p.clientX, p.clientY); finish(p.clientX, p.clientY); }
+    else st = null;
+  });
+  el.addEventListener("touchcancel", function () { st = null; });
+  el.addEventListener("mousedown", function (e) {
+    if (Date.now() - lastTouchEnd < 700) return; // iOS synthetic mouse
+    begin(e.clientX, e.clientY);
+  });
+  el.addEventListener("mousemove", function (e) { track(e.clientX, e.clientY); });
+  el.addEventListener("mouseup", function (e) {
+    if (Date.now() - lastTouchEnd < 700) { st = null; return; }
+    track(e.clientX, e.clientY);
+    finish(e.clientX, e.clientY);
+  });
+};
+// [H16 tap layer end]
+/* ===================== end INTERACTION LAYER (H16) ===================== */
 
 (function () {
   "use strict";
@@ -474,7 +567,7 @@ window.RE_TAP = { PX: 10, MS: 300 };
   var els = {};
   ["cam","sky","splash","startBtn","topbar","botbar","dataPanel","tunePanel",
    "btnData","btnTune","btnStars","btnLines","btnNames","dataMeta",
-   "btnTargets","btnBelow","btnArt","targetsPanel","targetsBody",
+   "btnTargets","btnBelow","btnArt","btnDbg","targetsPanel","targetsBody",
    "ephBody","obsline","pointing","st-geo","st-ori","st-cam",
    "v-fov","v-azo","v-alto","tuneReset"].forEach(function (id) {
     els[id] = document.getElementById(id);
@@ -519,10 +612,11 @@ window.RE_TAP = { PX: 10, MS: 300 };
       if (s && typeof s.stars === "boolean") {
         s.below = s.below === true; // added H05; older saves lack it -> default OFF
         s.art = s.art === true;     // added H12; default OFF
+        s.dbg = s.dbg !== false;    // added H16; default ON until sign-off
         return s;
       }
     } catch (e) {}
-    return { stars: true, lines: true, names: true, below: false, art: false };
+    return { stars: true, lines: true, names: true, below: false, art: false, dbg: true };
   }
   function bindLayer(btn, key) {
     btn.classList.toggle("on", layers[key]);
@@ -537,8 +631,13 @@ window.RE_TAP = { PX: 10, MS: 300 };
   bindLayer(els.btnNames, "names");
   bindLayer(els.btnArt, "art");
   bindLayer(els.btnBelow, "below");
+  bindLayer(els.btnDbg, "dbg");
   els.btnArt.addEventListener("click", function () { if (layers.art) loadArtData(); });
   if (layers.art) loadArtData(); // persisted ON from a previous visit
+  function syncDbgLine() {
+    document.getElementById("dbgline").style.display = (layers.dbg && started) ? "block" : "none";
+  }
+  els.btnDbg.addEventListener("click", syncDbgLine);
 
   /* Panels open below the REAL toolbar bottom (it wraps to two rows on
      phones); measured, not hard-coded, and refreshed on resize/rotation and
@@ -1273,9 +1372,11 @@ window.RE_TAP = { PX: 10, MS: 300 };
     els.botbar.style.display = "flex";
     tb.timebar.style.display = "flex";
     refreshTimebar();
+    syncDbgLine(); // H16 debug readout (default ON until interaction sign-off)
     updatePanelTop(); // toolbar just became visible; measure before first open
     setInterval(updatePanelTop, 1000); // self-heal: pill text changes can rewrap the toolbar
-    bindToggle(els.btnData, els.dataPanel, true, [[els.btnTargets, els.targetsPanel]]);
+    // H16: Data panel defaults CLOSED (it covered half the view on load)
+    bindToggle(els.btnData, els.dataPanel, false, [[els.btnTargets, els.targetsPanel]]);
     bindToggle(els.btnTargets, els.targetsPanel, false, [[els.btnData, els.dataPanel]]);
     bindToggle(els.btnTune, els.tunePanel, false);
     startOrientation(); // must be inside the user gesture (iOS 13+)
@@ -1292,9 +1393,12 @@ window.RE_TAP = { PX: 10, MS: 300 };
   // H09: every visible body has a dashboard now (Earth via picker/chips only)
   var DASH_PLANETS = { Saturn: 1, Jupiter: 1, Mars: 1, Mercury: 1, Venus: 1, Sun: 1, Moon: 1 };
   var TAP_RADIUS_PX = 44;
+  /* Hit-test only — gesture classification lives in the frozen H16
+     interaction layer (RE_attachTap). Returns the hit label for the
+     debug readout, or null. */
   function skyTap(cx, cy) {
-    if (!started || arPaused || !window.RE_openDashboard) return;
-    if (window.RE_cardOpen && window.RE_cardOpen()) return; // card swallows taps
+    if (!started || arPaused || !window.RE_openDashboard) return null;
+    if (window.RE_cardOpen && window.RE_cardOpen()) return null; // card swallows taps
     var w = window.innerWidth, h = window.innerHeight;
     var best = null, bd = TAP_RADIUS_PX;
     eph.forEach(function (b) {
@@ -1303,41 +1407,12 @@ window.RE_TAP = { PX: 10, MS: 300 };
       var p = project(b.az, b.alt, w, h); // current-frame position, never stale
       if (!p) return;
       var d = Math.hypot(p.x - cx, p.y - cy);
-      if (d < bd) { bd = d; best = b.name; }
+      if (d < bd) { bd = d; best = b; }
     });
-    if (best) window.RE_openDashboard(best);
+    if (best) { window.RE_openDashboard(best.name); return best.glyph + " " + best.name; }
+    return null;
   }
-  /* H15: explicit tap classifier on the touch path. iOS `click` on a canvas
-     is unreliable when the finger moves a few px during the tap — that made
-     planets "hard to tap". Touch events classify the gesture ourselves; the
-     click listener remains for desktop mice, suppressed after real touches
-     (iOS fires a synthetic click ~300 ms after touchend). */
-  // [H15 tap wiring AR start]
-  var skyTouch = null, skyLastTouchEnd = 0;
-  els.sky.addEventListener("touchstart", function (ev) {
-    if (ev.touches.length !== 1) { skyTouch = null; return; }
-    var t = ev.touches[0];
-    skyTouch = { lx: t.clientX, ly: t.clientY, t0: Date.now(), moved: 0 };
-  }, { passive: true });
-  els.sky.addEventListener("touchmove", function (ev) {
-    if (!skyTouch || !ev.touches.length) return;
-    var t = ev.touches[0];
-    skyTouch.moved += Math.abs(t.clientX - skyTouch.lx) + Math.abs(t.clientY - skyTouch.ly);
-    skyTouch.lx = t.clientX; skyTouch.ly = t.clientY;
-  }, { passive: true });
-  els.sky.addEventListener("touchend", function (ev) {
-    skyLastTouchEnd = Date.now();
-    var t = ev.changedTouches && ev.changedTouches[0];
-    var tap = skyTouch && t && skyTouch.moved < RE_TAP.PX && (Date.now() - skyTouch.t0) < RE_TAP.MS;
-    skyTouch = null;
-    if (tap) skyTap(t.clientX, t.clientY);
-  });
-  els.sky.addEventListener("touchcancel", function () { skyTouch = null; });
-  els.sky.addEventListener("click", function (ev) {
-    if (Date.now() - skyLastTouchEnd < 700) return; // synthetic post-touch click
-    skyTap(ev.clientX, ev.clientY);
-  });
-  // [H15 tap wiring AR end]
+  window.RE_attachTap(els.sky, skyTap);
   Array.prototype.forEach.call(document.querySelectorAll(".pchip"), function (btn) {
     btn.addEventListener("click", function () {
       if (window.RE_openDashboard) window.RE_openDashboard(btn.getAttribute("data-planet"));

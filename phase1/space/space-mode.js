@@ -312,39 +312,32 @@ SpaceMode.prototype.buildRenderer = function () {
   window.addEventListener("resize", this.onResize);
   this.sizeOverlay();
 
-  /* touch-drag look + H15 tap classifier. The pan math is UNCHANGED (H13
-     restored); the tap decision now uses RAW PIXELS + duration via the
-     shared RE_TAP thresholds (the old gate accumulated in degrees, ~78 px —
-     effectively untested on the real event path). Synthetic mouse events
-     that iOS fires after a touch are suppressed so taps can't double-fire,
-     and touchcancel clears the gesture. */
-  // [H15 tap wiring SPACE start]
-  var el = this.renderer.domElement, drag = null, movedPx = 0, downAt = 0, lastTouchEnd = 0;
-  function pt(e) { return (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e; }
-  this.onDown = function (e) {
-    if (!e.touches && !e.changedTouches && Date.now() - lastTouchEnd < 700) return; // synthetic mouse
-    var p = pt(e);
-    drag = { x: p.clientX, y: p.clientY };
-    movedPx = 0; downAt = Date.now();
-  };
+  /* touch-drag look — FROZEN (H16). Pan code restored VERBATIM from the
+     known-good commit 10cca53 (H13 state Alex confirmed on device), with
+     two documented deviations only: (1) the old in-band tap gate
+     (`moved < 6` degrees) is removed from onUp — taps are handled by the
+     shared RE_attachTap layer below, which registers its OWN listeners
+     and never touches this pan state; (2) touchcancel clears the drag.
+     THE ONE RULE: this code moves the view only while input is active —
+     no momentum, no snap, no proximity attraction. Do not modify. */
+  // [H16 pan SPACE start]
+  var el = this.renderer.domElement, drag = null, moved = 0;
+  function pt(e) { return e.touches ? e.touches[0] : e; }
+  this.onDown = function (e) { var p = pt(e); drag = { x: p.clientX, y: p.clientY }; moved = 0; };
   this.onMove = function (e) {
     if (!drag) return;
     if (e.cancelable) e.preventDefault();
     var p = pt(e);
-    movedPx += Math.abs(p.clientX - drag.x) + Math.abs(p.clientY - drag.y);
     var scale = self.camera.fov / window.innerHeight; // deg per px
     var dx = (p.clientX - drag.x) * scale, dy = (p.clientY - drag.y) * scale;
+    moved += Math.abs(dx) + Math.abs(dy);
     if (self.lookMode === "drag" && !self.fly) {
       self.viewRa = (self.viewRa + dx + 360) % 360; // drag right = look left (sky pans with finger)
       self.viewDec = Math.max(-89, Math.min(89, self.viewDec + dy));
     }
     drag = { x: p.clientX, y: p.clientY };
   };
-  this.onUp = function (e) {
-    if (e.changedTouches) lastTouchEnd = Date.now();
-    else if (Date.now() - lastTouchEnd < 700) { drag = null; return; } // synthetic mouse
-    var T = window.RE_TAP || { PX: 10, MS: 300 };
-    if (drag && movedPx < T.PX && (Date.now() - downAt) < T.MS && !self.fly) self.tapSelect(e);
+  this.onUp = function () {
     drag = null;
   };
   this.onCancel = function () { drag = null; };
@@ -352,7 +345,12 @@ SpaceMode.prototype.buildRenderer = function () {
   window.addEventListener("mousemove", this.onMove); el.addEventListener("touchmove", this.onMove, { passive: false });
   window.addEventListener("mouseup", this.onUp); el.addEventListener("touchend", this.onUp);
   el.addEventListener("touchcancel", this.onCancel);
-  // [H15 tap wiring SPACE end]
+  // [H16 pan SPACE end]
+  // Tap layer (frozen, shared with AR + dashboards): hit-test only.
+  if (window.RE_attachTap) window.RE_attachTap(el, function (x, y) {
+    if (self.fly) return null; // mid fly-to: ignore taps
+    return self.tapSelect({ clientX: x, clientY: y });
+  });
 };
 
 SpaceMode.prototype.sizeOverlay = function () {
@@ -687,8 +685,10 @@ SpaceMode.prototype.flashHint = function (text) {
    2) DSO billboards (projected apparent radius, min 34 px) -> detail card
    3) labeled bright stars (36 px) -> star info card
    Detail cards are view-only by design — no flying into nebulae/galaxies. */
+/* Hit-test only (H16: classification handled by the shared tap layer).
+   Returns the hit label for the debug readout, or null on no-hit. */
 SpaceMode.prototype.tapSelect = function (e) {
-  if (window.RE_cardOpen && window.RE_cardOpen()) return; // a card has focus
+  if (window.RE_cardOpen && window.RE_cardOpen()) return null; // a card has focus
   var p = e.changedTouches ? e.changedTouches[0] : e;
   var v = new THREE.Vector3(), w = window.innerWidth, h = window.innerHeight;
   var self = this;
@@ -706,7 +706,7 @@ SpaceMode.prototype.tapSelect = function (e) {
     d = Math.hypot(sp.x - p.clientX, sp.y - p.clientY);
     if (d < bd) { bd = d; best = name; }
   }
-  if (best) { this.selectPlanet(best); return; }
+  if (best) { this.selectPlanet(best); return best; }
   // 2) DSO billboards (hit radius follows their apparent size on screen)
   var bestDso = null; bd = 1e9;
   var pxPerDeg = h / this.camera.fov;
@@ -720,7 +720,7 @@ SpaceMode.prototype.tapSelect = function (e) {
     d = Math.hypot(sp.x - p.clientX, sp.y - p.clientY);
     if (d < hitR && d < bd) { bd = d; bestDso = dm; }
   }
-  if (bestDso) { this.showDsoCard(bestDso.cfg); return; }
+  if (bestDso) { this.showDsoCard(bestDso.cfg); return bestDso.cfg.name; }
   // 3) labeled bright stars
   if (this.starLabels) {
     var bestStar = null; bd = 36;
@@ -730,8 +730,9 @@ SpaceMode.prototype.tapSelect = function (e) {
       d = Math.hypot(sp.x - p.clientX, sp.y - p.clientY);
       if (d < bd) { bd = d; bestStar = this.starLabels[j]; }
     }
-    if (bestStar) { this.showStarCard(bestStar); return; }
+    if (bestStar) { this.showStarCard(bestStar); return "★ " + bestStar.name; }
   }
+  return null;
 };
 
 SpaceMode.prototype.showDsoCard = function (c) {
