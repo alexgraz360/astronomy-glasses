@@ -136,7 +136,7 @@ var CREDIT = "Textures © Solar System Scope, CC BY 4.0 (NASA-derived) · Epheme
    COMPLETELY separate from SimClock — no positions are computed; selecting
    an era only morphs appearance (procedural shader params) and swaps in
    sourced facts with confidence tags. */
-var ERAS_BODIES = { Mars: 1, Saturn: 1, Sun: 1, Earth: 1 };
+var ERAS_BODIES = { Mars: 1, Saturn: 1, Sun: 1, Earth: 1, Venus: 1, Moon: 1 }; // H17: + Venus, Moon
 var deepTimePromise = null;
 function loadDeepTime() {
   if (!deepTimePromise) deepTimePromise = fetch("data/deep-time.json").then(function (r) { return r.json(); });
@@ -1004,11 +1004,16 @@ Dashboard.prototype.renderEras = function () {
 Dashboard.prototype.applyEra = function (ep) {
   var d = this.eraDefaults || { atmoR: 0, atmoG: 0, atmoB: 0, atmoStr: 0, ambient: 0.045 };
   var p = ep.params || {};
+  /* H17: the neutral cloud level is 1 only for bodies whose PRESENT look
+     includes a real cloud layer (cfg.cloudMap). For everything else the
+     lazily-built era-cloud layer must default to 0, or any era that omits
+     "cloud" would fade Earth clouds in over a cloudless body. */
+  var cloud0 = this.cfg.cloudMap ? 1 : 0;
   this.eraTgt = {
     tintR: p.tintColor ? p.tintColor[0] : 1, tintG: p.tintColor ? p.tintColor[1] : 1, tintB: p.tintColor ? p.tintColor[2] : 1,
     tintMix: p.tintMix || 0, white: p.white || 0, ocean: p.ocean || 0, desat: p.desat || 0,
     night: p.night != null ? p.night : 1, ringMul: p.ringMul != null ? p.ringMul : 1,
-    cloudMul: p.cloud != null ? p.cloud : 1, scale: p.scale || 1, camMul: p.camMul || 1,
+    cloudMul: p.cloud != null ? p.cloud : cloud0, scale: p.scale || 1, camMul: p.camMul || 1,
     atmoR: p.atmoColor ? p.atmoColor[0] : d.atmoR, atmoG: p.atmoColor ? p.atmoColor[1] : d.atmoG,
     atmoB: p.atmoColor ? p.atmoColor[2] : d.atmoB,
     atmoStr: p.atmoStrength != null ? p.atmoStrength : d.atmoStr,
@@ -1017,7 +1022,7 @@ Dashboard.prototype.applyEra = function (ep) {
   if (!this.eraCur) { // first use: start from present-day neutral
     this.eraCur = {
       tintR: 1, tintG: 1, tintB: 1, tintMix: 0, white: 0, ocean: 0, desat: 0,
-      night: 1, ringMul: 1, cloudMul: 1, scale: 1, camMul: 1,
+      night: 1, ringMul: 1, cloudMul: cloud0, scale: 1, camMul: 1,
       atmoR: d.atmoR, atmoG: d.atmoG, atmoB: d.atmoB, atmoStr: d.atmoStr, ambient: d.ambient
     };
   }

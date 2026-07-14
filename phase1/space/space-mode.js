@@ -71,12 +71,14 @@ function slerpDir(a, b, t) {
   return a.clone().applyAxisAngle(axis, angle * t).normalize();
 }
 
-/* Curated deep-sky set. ra (hours, J2000), dec (deg), sizeArcmin = real
-   angular size (largest dimension). Files under textures/dso/, 1K, from
-   Wikimedia Commons — credits recorded here and in textures/dso/README.md.
-   H09 detail-card facts (type/con/distLy/mag/desc) sourced from the SEDS
+/* Curated deep-sky set (H06: 16, H17: +20 = 36). ra (hours, J2000),
+   dec (deg), sizeArcmin = real angular size (largest dimension). Files
+   under textures/dso/, ≤1K, from Wikimedia Commons — licenses verified
+   via the Commons API; credits recorded here and in textures/dso/README.md.
+   Detail-card facts (type/con/distLy/mag/desc) sourced from the SEDS
    Messier database, NASA object pages, and Wikipedia infoboxes (src field);
-   distances rounded to commonly cited values, not invented. */
+   distances rounded to commonly cited values, not invented. mag: null =
+   dark nebula (no meaningful integrated magnitude). */
 var DSO_SRC = "NASA / SEDS Messier database / Wikipedia";
 var DSOS = [
   { id: "m42",   name: "Orion Nebula (M42)",      ra: 5.5903,  dec: -5.45,   sizeArcmin: 65,  credit: "NASA/ESA/M. Robberto (STScI) — Public domain",
@@ -126,7 +128,70 @@ var DSOS = [
     desc: "One of the largest star-forming regions in the galaxy — bigger and brighter than Orion, though only visible from southern skies. Home to Eta Carinae, an unstable supergiant that may go supernova." },
   { id: "m17",   name: "Omega Nebula (M17)",      ra: 18.3467, dec: -16.183, sizeArcmin: 11,  credit: "NASA/ESA/J. Hester (ASU) — Public domain",
     type: "Emission nebula", con: "Sagittarius", distLy: "~5,500 ly", mag: 6.0, src: DSO_SRC,
-    desc: "Also called the Swan Nebula for its checkmark shape, this is one of the most massive and luminous star-forming regions in the Milky Way." }
+    desc: "Also called the Swan Nebula for its checkmark shape, this is one of the most massive and luminous star-forming regions in the Milky Way." },
+  /* ---- H17 additions (20): images license-verified via the Commons API,
+     credits also in textures/dso/README.md. Data entries only — rendered
+     and hit-tested by the existing, unchanged systems. ---- */
+  { id: "m44",   name: "Beehive Cluster (M44)",   ra: 8.6733,  dec: 19.98,   sizeArcmin: 95,  credit: "Chuck Ayoub — CC0",
+    type: "Open star cluster", con: "Cancer", distLy: "~580 ly", mag: 3.7, src: DSO_SRC,
+    desc: "Known since antiquity as Praesepe, the Manger — a naked-eye smudge that Galileo's first telescope resolved into stars. One of the nearest open clusters, about 600 million years old." },
+  { id: "hyades", name: "Hyades",                 ra: 4.47,    dec: 15.87,   sizeArcmin: 330, credit: "NASA/ESA/STScI — CC BY-SA 4.0",
+    type: "Open star cluster", con: "Taurus", distLy: "~150 ly", mag: 0.5, src: DSO_SRC,
+    desc: "The nearest open cluster to Earth, forming the V-shaped face of Taurus the Bull. Bright orange Aldebaran appears to belong to it but is actually a foreground star at less than half the distance." },
+  { id: "doublecl", name: "Double Cluster (NGC 869/884)", ra: 2.3367, dec: 57.13, sizeArcmin: 60, credit: "Genuson — CC BY-SA 3.0",
+    type: "Open star clusters (pair)", con: "Perseus", distLy: "~7,500 ly", mag: 3.7, src: DSO_SRC,
+    desc: "Two rich young clusters side by side, each with hundreds of hot blue supergiants — a showpiece of binocular astronomy known since Hipparchus catalogued it around 130 BC." },
+  { id: "m81",   name: "Bode's Galaxy (M81)",     ra: 9.9267,  dec: 69.065,  sizeArcmin: 27,  credit: "NASA/ESA/Hubble Heritage — Public domain",
+    type: "Spiral galaxy", con: "Ursa Major", distLy: "~12 million ly", mag: 6.9, src: DSO_SRC,
+    desc: "A grand-design spiral and the heart of the nearest galaxy group beyond our own Local Group. It is locked in a gravitational tug-of-war with its neighbor, the Cigar Galaxy (M82)." },
+  { id: "m82",   name: "Cigar Galaxy (M82)",      ra: 9.9317,  dec: 69.68,   sizeArcmin: 11,  credit: "NASA/ESA/Hubble Heritage — Public domain",
+    type: "Starburst galaxy (edge-on)", con: "Ursa Major", distLy: "~12 million ly", mag: 8.4, src: DSO_SRC,
+    desc: "A galaxy in overdrive: a close pass by M81 triggered a starburst forming stars ten times faster than the Milky Way, blasting towers of glowing hydrogen out of its disk." },
+  { id: "m87",   name: "Messier 87",              ra: 12.5133, dec: 12.391,  sizeArcmin: 7.2, credit: "NASA/STScI/WikiSky — Public domain",
+    type: "Giant elliptical galaxy", con: "Virgo", distLy: "~55 million ly", mag: 8.6, src: DSO_SRC,
+    desc: "The monster at the heart of the Virgo Cluster, with several trillion stars and a jet of plasma launched at near light speed. Its central black hole, M87*, was the first ever photographed (Event Horizon Telescope, 2019)." },
+  { id: "omegacen", name: "Omega Centauri",       ra: 13.4467, dec: -47.48,  sizeArcmin: 36,  credit: "Chuck Ayoub — CC0",
+    type: "Globular cluster", con: "Centaurus", distLy: "~17,000 ly", mag: 3.9, src: DSO_SRC,
+    desc: "The largest and brightest globular cluster of the Milky Way — roughly 10 million stars in a ball so massive it may actually be the stripped core of a dwarf galaxy our galaxy swallowed." },
+  { id: "47tuc", name: "47 Tucanae",              ra: 0.4017,  dec: -72.081, sizeArcmin: 31,  credit: "NASA/ESA/Hubble Heritage — CC BY 4.0",
+    type: "Globular cluster", con: "Tucana", distLy: "~15,000 ly", mag: 4.1, src: DSO_SRC,
+    desc: "The southern sky's second-brightest globular cluster, so dense at its core that stars there sit thousands of times closer together than the stars near the Sun. It shares the field with the Small Magellanic Cloud." },
+  { id: "tarantula", name: "Tarantula Nebula (NGC 2070)", ra: 5.6433, dec: -69.10, sizeArcmin: 40, credit: "NASA/ESA/CSA/STScI (JWST) — Public domain",
+    type: "Emission nebula (in the LMC)", con: "Dorado", distLy: "~160,000 ly", mag: 8.0, src: DSO_SRC,
+    desc: "The most violent star-forming region in the entire Local Group, inside the Large Magellanic Cloud. If it sat where the Orion Nebula is, it would cast shadows at night. Supernova 1987A exploded on its outskirts." },
+  { id: "rosette", name: "Rosette Nebula",        ra: 6.55,    dec: 4.95,    sizeArcmin: 80,  credit: "A. Wilhelm — CC BY-SA 4.0",
+    type: "Emission nebula", con: "Monoceros", distLy: "~5,200 ly", mag: 9.0, src: DSO_SRC,
+    desc: "A cosmic rose: the young cluster NGC 2244 at its center has blown a hole in its own birth cloud, giving the nebula its wreath shape. The whole flower spans about 130 light-years." },
+  { id: "ngc7000", name: "North America Nebula (NGC 7000)", ra: 20.9883, dec: 44.53, sizeArcmin: 120, credit: "Giuseppe Donatiello — CC0",
+    type: "Emission nebula", con: "Cygnus", distLy: "~2,600 ly", mag: 4.0, src: DSO_SRC,
+    desc: "A glowing continent beside bright Deneb, its 'Gulf of Mexico' carved by a foreground dust cloud, with the Pelican Nebula across the strait. Gaia finally pinned down its distance in 2020." },
+  { id: "horsehead", name: "Horsehead Nebula (B33)", ra: 5.6833, dec: -2.458, sizeArcmin: 8, credit: "ESO/SPECULOOS — CC BY 4.0",
+    type: "Dark nebula", con: "Orion", distLy: "~1,400 ly", mag: null, src: DSO_SRC,
+    desc: "The sky's most famous silhouette: a chess-knight head of cold, opaque dust standing in front of the glowing curtain of IC 434, just south of Orion's Belt star Alnitak." },
+  { id: "flame", name: "Flame Nebula (NGC 2024)", ra: 5.6983, dec: -1.85,   sizeArcmin: 30,  credit: "Chuck Ayoub — CC0",
+    type: "Emission nebula", con: "Orion", distLy: "~1,400 ly", mag: null, src: DSO_SRC,
+    desc: "Alnitak's radiation makes this cloud blaze while a dark lane of dust splits it into fiery filaments. Behind the veil hides a dense cluster of newborn stars, visible only in infrared." },
+  { id: "california", name: "California Nebula (NGC 1499)", ra: 4.055, dec: 36.42, sizeArcmin: 145, credit: "A. Wilhelm — CC BY-SA 4.0",
+    type: "Emission nebula", con: "Perseus", distLy: "~1,000 ly", mag: 6.0, src: DSO_SRC,
+    desc: "A 100-light-year ribbon of hydrogen shaped uncannily like the US state, lit by the scorching runaway star Xi Persei. Famously hard to see visually despite its size — a photographic favorite." },
+  { id: "veil",  name: "Veil Nebula (NGC 6960)",  ra: 20.7617, dec: 30.71,   sizeArcmin: 70,  credit: "Ken Crawford — CC BY-SA 3.0",
+    type: "Supernova remnant", con: "Cygnus", distLy: "~2,400 ly", mag: 7.0, src: DSO_SRC,
+    desc: "The western arc (the 'Witch's Broom') of the Cygnus Loop — wreckage of a star that exploded roughly 10–20 thousand years ago, now a lacework of shocked gas spanning six full Moons of sky." },
+  { id: "lmc",   name: "Large Magellanic Cloud",  ra: 5.3933,  dec: -69.756, sizeArcmin: 650, credit: "Robert Gendler/ESO — CC BY 4.0",
+    type: "Satellite galaxy (barred irregular)", con: "Dorado/Mensa", distLy: "~160,000 ly", mag: 0.9, src: DSO_SRC,
+    desc: "The Milky Way's brightest satellite galaxy, a naked-eye cloud in far-southern skies carrying billions of stars and the Tarantula Nebula. Magellan's crews made it famous to Europeans in 1519." },
+  { id: "smc",   name: "Small Magellanic Cloud",  ra: 0.8783,  dec: -72.83,  sizeArcmin: 320, credit: "ESA/Hubble & Digitized Sky Survey 2 — CC BY 4.0",
+    type: "Satellite galaxy (dwarf irregular)", con: "Tucana", distLy: "~200,000 ly", mag: 2.7, src: DSO_SRC,
+    desc: "The LMC's smaller companion, a few hundred million stars being slowly pulled apart by the Milky Way's tides. Henrietta Leavitt's study of its pulsating stars gave astronomy its cosmic distance ladder." },
+  { id: "m22",   name: "Messier 22",              ra: 18.6067, dec: -23.905, sizeArcmin: 32,  credit: "ESA/Hubble & NASA — CC BY 4.0",
+    type: "Globular cluster", con: "Sagittarius", distLy: "~10,600 ly", mag: 5.1, src: DSO_SRC,
+    desc: "One of the first globular clusters ever discovered (1665) and among the brightest — it outshines M13 but rides low for northern observers, glowing in front of the Milky Way's central bulge." },
+  { id: "m101",  name: "Pinwheel Galaxy (M101)",  ra: 14.0533, dec: 54.349,  sizeArcmin: 29,  credit: "ESA/NASA (Hubble) — CC BY 4.0",
+    type: "Spiral galaxy (face-on)", con: "Ursa Major", distLy: "~21 million ly", mag: 7.9, src: DSO_SRC,
+    desc: "A perfect face-on pinwheel nearly twice the Milky Way's diameter, its lopsided arms studded with giant star-forming regions. In 2023 it hosted SN 2023ixf, the closest supernova in a decade." },
+  { id: "cena",  name: "Centaurus A (NGC 5128)",  ra: 13.425,  dec: -43.019, sizeArcmin: 26,  credit: "ESO/WFI; MPIfR/APEX; NASA/CXC — CC BY 4.0",
+    type: "Radio galaxy (elliptical)", con: "Centaurus", distLy: "~12 million ly", mag: 6.8, src: DSO_SRC,
+    desc: "The nearest active galaxy: an elliptical wrapped in the twisted dust lane of a spiral it recently devoured, while its central black hole fires radio jets across a million light-years." }
 ];
 
 var PLANET_SPRITES = [
@@ -743,7 +808,7 @@ SpaceMode.prototype.showDsoCard = function (c) {
     subtitle: c.type + " · in " + c.con,
     rows: [
       ["Distance", c.distLy],
-      ["Apparent magnitude", c.mag.toFixed(1)],
+      ["Apparent magnitude", c.mag != null ? c.mag.toFixed(1) : "— (dark nebula)"],
       ["Apparent size", c.sizeArcmin >= 60 ? (c.sizeArcmin / 60).toFixed(1) + "°" : c.sizeArcmin + "′"],
       ["Position (J2000)", "RA " + c.ra.toFixed(2) + "h · Dec " + (c.dec > 0 ? "+" : "") + c.dec.toFixed(1) + "°"]
     ],

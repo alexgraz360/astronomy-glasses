@@ -4,7 +4,7 @@
     "disclaimer": "Curated scientific reconstructions and projections. Entirely separate from the live ephemeris clock: planetary positions are only computable ~±3,000 years from now, so these eras morph the APPEARANCE and swap in sourced facts — they do not compute positions.",
     "confidence_scale": ["Established", "Projected", "Speculative"],
     "morphs": "Procedural only (shader tints, whitening, luminance-keyed ocean overlay, ring-opacity fade, scale changes, cloud/atmosphere parameter blends of existing vendored textures). No new image assets. Visuals are artist's impressions guided by the cited science.",
-    "sources_verified": "2026-07-11: Saturn ring-rain figures verified against the linked NASA article; remaining values are standard published figures cited per epoch."
+    "sources_verified": "2026-07-11: Saturn ring-rain figures verified against the linked NASA article; remaining values are standard published figures cited per epoch. 2026-07-14 (H17): Venus early-water debate and Moon chronology figures are standard published values cited per epoch; lunar recession rate 3.82 cm/yr per NASA lunar laser ranging."
   },
   "bodies": {
     "Mars": [
@@ -51,6 +51,66 @@
         "source": "NASA (2018) / O'Donoghue et al. (2019): <100 Myr worst case, ~300 Myr from ring rain alone; some studies argue longer — timing debated",
         "desc": "Saturn without its rings — a plain gas giant, as it likely was for most of its 4.5-billion-year history if the rings really are young. Future observers may know the rings only from our era's photographs.",
         "params": { "ringMul": 0.0 }
+      }
+    ],
+    "Venus": [
+      {
+        "id": "early-venus", "name": "Early Venus — a water world?", "time": "~4–3 billion years ago (some models: until ~700 million years ago)",
+        "confidence": "Speculative — debated",
+        "source": "Way et al. (2016), GRL — climate models allow shallow oceans and temperate conditions for ~2–3 Gyr; BUT Turbet et al. (2021), Nature, argues day-side clouds kept early Venus too hot for water to ever condense — genuinely unresolved",
+        "desc": "Did Venus once have oceans? Climate models by Way and colleagues suggest a slowly rotating young Venus could have stayed temperate, with shallow seas, for billions of years. More recent modeling (Turbet 2021) counters that water may NEVER have rained out onto the surface at all. Both views are current science — the blue ocean world shown here is one debated possibility, not a consensus. Artist's impression.",
+        "params": { "ocean": 0.5, "tintColor": [0.6, 0.78, 1.1], "tintMix": 0.5, "desat": 0.25, "cloud": 0.7, "atmoColor": [0.5, 0.7, 1.0], "atmoStrength": 0.6 }
+      },
+      {
+        "id": "runaway", "name": "Runaway greenhouse", "time": "onset uncertain — sometime between ~3.5 billion and ~700 million years ago",
+        "confidence": "Projected",
+        "source": "Ingersoll (1969), JAS — runaway-greenhouse mechanism; Donahue et al. (1982), Science — Venus's deuterium/hydrogen ratio ~150× Earth's, the fingerprint of an ocean's worth of water lost to space; NASA Venus overview",
+        "desc": "However it began, the outcome is written in Venus's air: as the brightening Sun evaporated any surface water, water vapor's own greenhouse effect fed the warming, sunlight split the vapor and the hydrogen escaped to space. With no water left to weather rock, CO₂ piled up in the atmosphere unchecked. The mechanism is established physics; the timing is not.",
+        "params": { "tintColor": [1.2, 0.95, 0.6], "tintMix": 0.45, "white": 0.15, "cloud": 0.25, "atmoColor": [1.0, 0.8, 0.45], "atmoStrength": 0.8 }
+      },
+      {
+        "id": "venus-now", "name": "Venus today (Now)", "time": "Now", "now": true,
+        "confidence": "Established",
+        "source": "NASA Venus fact sheet",
+        "desc": "The hottest planet: ~465 °C at the surface — hot enough to melt lead — under ~92 bars of CO₂, wrapped in globe-spanning clouds of sulfuric acid. A cautionary twin of Earth, and the reason 'runaway greenhouse' is a term at all.",
+        "params": {}
+      }
+    ],
+    "Moon": [
+      {
+        "id": "magma-ocean", "name": "Birth: the magma ocean", "time": "~4.5 billion years ago",
+        "confidence": "Established",
+        "source": "NASA — Theia giant-impact hypothesis; Apollo samples: the anorthosite highland crust crystallized from a global magma ocean (LPI)",
+        "desc": "A Mars-sized body, Theia, struck the young Earth; the Moon coalesced from the incandescent debris. For its first tens of millions of years it was covered by a global ocean of molten rock — the pale highland crust we see today is the 'scum' that floated and froze on top. It hung enormous in Earth's sky, orbiting many times closer than now. Artist's impression.",
+        "params": { "tintColor": [1.5, 0.45, 0.18], "tintMix": 0.88, "desat": 0.5, "ambient": 0.5 }
+      },
+      {
+        "id": "bombardment", "name": "Heavy bombardment", "time": "~4.1–3.8 billion years ago",
+        "confidence": "Established",
+        "source": "Apollo impact-melt ages define the era; whether it was a distinct 'Late Heavy Bombardment' spike or the tail of a smooth decline is actively debated (Boehnke & Harrison 2016, PNAS)",
+        "desc": "Giant impacts excavated the vast basins — Imbrium, Serenitatis, Crisium — that still shape the Moon's face, while smaller strikes saturated the surface with craters. Note the honest caveat: the cratering happened, but whether it came as a late SPIKE (the classic 'Late Heavy Bombardment') or a long steady decline is still argued. Shown pre-maria: pale, uniformly battered highlands. Artist's impression.",
+        "params": { "tintColor": [1.05, 0.95, 0.85], "tintMix": 0.35, "desat": 0.55, "ambient": 0.12 }
+      },
+      {
+        "id": "maria", "name": "Mare volcanism", "time": "~3.5–3.0 billion years ago (peak; samples span ~3.9–3.1)",
+        "confidence": "Established",
+        "source": "NASA/LPI — Apollo mare basalt sample ages; peak mare emplacement ~3.5–3.0 Gya",
+        "desc": "Radioactive heating melted the Moon's interior and basaltic lava flooded the great impact basins, freezing into the dark plains — the maria, or 'seas' — that draw the face of the Man in the Moon. The warm tint shown suggests the era's active flows. Artist's impression.",
+        "params": { "tintColor": [1.15, 0.72, 0.45], "tintMix": 0.3, "ambient": 0.15 }
+      },
+      {
+        "id": "moon-now", "name": "The Moon today (Now)", "time": "Now", "now": true,
+        "confidence": "Established",
+        "source": "NASA Moon fact sheet",
+        "desc": "Geologically quiet for billions of years: the same maria, highlands, and rays of the young crater Tycho that every human who ever lived has looked up at.",
+        "params": {}
+      },
+      {
+        "id": "receding", "name": "Drifting away", "time": "Now → the far future",
+        "confidence": "Established",
+        "source": "NASA — lunar laser ranging against the Apollo retroreflectors measures the Moon receding 3.8 cm per year; tidal transfer of Earth's spin angular momentum",
+        "desc": "Laser pulses bounced off Apollo-era mirrors show the Moon spiraling outward ~3.8 cm every year, fed by Earth's tides — and Earth's day slowly lengthening in exchange. In the distant future the Moon will appear too small to fully cover the Sun, and total solar eclipses will end. Shown smaller in the sky, as a far-future observer would see it.",
+        "params": { "camMul": 1.35 }
       }
     ],
     "Sun": [

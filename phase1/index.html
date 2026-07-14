@@ -748,7 +748,13 @@ window.RE_attachTap = function (el, onTap) {
   cardWrap.addEventListener("click", function (ev) { if (ev.target === cardWrap) closeCard(); });
   window.RE_showCard = showCard;
   window.RE_closeCard = closeCard;
-  window.RE_cardOpen = function () { return cardWrap.style.display !== "none"; };
+  /* H17 bug fix: this must be TRUE only while a card is actually shown.
+     The old check (inline display !== "none") was TRUE from page load —
+     the element starts with NO inline style ("") and is hidden by CSS —
+     so every hit-test (skyTap/tapSelect/tapMoon) saw "a card is open"
+     and swallowed the tap: the reason Space DSOs/stars never opened on
+     device. showCard sets "flex"; anything else means closed. */
+  window.RE_cardOpen = function () { return cardWrap.style.display === "flex"; };
 
   /* ---- time bar (H08): UI over SimClock, works in AR and Space modes ---- */
   var tb = {};
