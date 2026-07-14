@@ -195,9 +195,10 @@
   .tbnote { color: var(--warn); font-size: 10px; text-align: center; }
 
   /* Detail card (H09): one reusable view-only card for DSOs and stars.
-     z 38: above Space Mode (35) and time bar (36), below dashboards (40). */
+     z 45 (H15): above dashboards (40) too, so moon cards opened from a
+     dashboard are visible; the full-screen wrap swallows background taps. */
   #cardWrap {
-    position: fixed; inset: 0; z-index: 38; display: none;
+    position: fixed; inset: 0; z-index: 45; display: none;
     align-items: center; justify-content: center;
     background: rgba(0,0,0,0.74); padding: 18px;
   }
@@ -387,6 +388,11 @@ window.SimClock = (function () {
     }
   };
 })();
+
+/* H15: shared tap-vs-drag thresholds. A touch that moves less than PX raw
+   pixels AND lasts under MS milliseconds is a TAP; anything else is a
+   drag/look. One set of numbers for AR, Space Mode, and the dashboards. */
+window.RE_TAP = { PX: 10, MS: 300 };
 
 (function () {
   "use strict";
@@ -1286,20 +1292,52 @@ window.SimClock = (function () {
   // H09: every visible body has a dashboard now (Earth via picker/chips only)
   var DASH_PLANETS = { Saturn: 1, Jupiter: 1, Mars: 1, Mercury: 1, Venus: 1, Sun: 1, Moon: 1 };
   var TAP_RADIUS_PX = 44;
-  els.sky.addEventListener("click", function (ev) {
+  function skyTap(cx, cy) {
     if (!started || arPaused || !window.RE_openDashboard) return;
+    if (window.RE_cardOpen && window.RE_cardOpen()) return; // card swallows taps
     var w = window.innerWidth, h = window.innerHeight;
     var best = null, bd = TAP_RADIUS_PX;
     eph.forEach(function (b) {
       if (!DASH_PLANETS[b.name]) return;
       if (b.alt <= 0 && !layers.below) return; // below-horizon tappable only in Below mode
-      var p = project(b.az, b.alt, w, h);
+      var p = project(b.az, b.alt, w, h); // current-frame position, never stale
       if (!p) return;
-      var d = Math.hypot(p.x - ev.clientX, p.y - ev.clientY);
+      var d = Math.hypot(p.x - cx, p.y - cy);
       if (d < bd) { bd = d; best = b.name; }
     });
     if (best) window.RE_openDashboard(best);
+  }
+  /* H15: explicit tap classifier on the touch path. iOS `click` on a canvas
+     is unreliable when the finger moves a few px during the tap — that made
+     planets "hard to tap". Touch events classify the gesture ourselves; the
+     click listener remains for desktop mice, suppressed after real touches
+     (iOS fires a synthetic click ~300 ms after touchend). */
+  // [H15 tap wiring AR start]
+  var skyTouch = null, skyLastTouchEnd = 0;
+  els.sky.addEventListener("touchstart", function (ev) {
+    if (ev.touches.length !== 1) { skyTouch = null; return; }
+    var t = ev.touches[0];
+    skyTouch = { lx: t.clientX, ly: t.clientY, t0: Date.now(), moved: 0 };
+  }, { passive: true });
+  els.sky.addEventListener("touchmove", function (ev) {
+    if (!skyTouch || !ev.touches.length) return;
+    var t = ev.touches[0];
+    skyTouch.moved += Math.abs(t.clientX - skyTouch.lx) + Math.abs(t.clientY - skyTouch.ly);
+    skyTouch.lx = t.clientX; skyTouch.ly = t.clientY;
+  }, { passive: true });
+  els.sky.addEventListener("touchend", function (ev) {
+    skyLastTouchEnd = Date.now();
+    var t = ev.changedTouches && ev.changedTouches[0];
+    var tap = skyTouch && t && skyTouch.moved < RE_TAP.PX && (Date.now() - skyTouch.t0) < RE_TAP.MS;
+    skyTouch = null;
+    if (tap) skyTap(t.clientX, t.clientY);
   });
+  els.sky.addEventListener("touchcancel", function () { skyTouch = null; });
+  els.sky.addEventListener("click", function (ev) {
+    if (Date.now() - skyLastTouchEnd < 700) return; // synthetic post-touch click
+    skyTap(ev.clientX, ev.clientY);
+  });
+  // [H15 tap wiring AR end]
   Array.prototype.forEach.call(document.querySelectorAll(".pchip"), function (btn) {
     btn.addEventListener("click", function () {
       if (window.RE_openDashboard) window.RE_openDashboard(btn.getAttribute("data-planet"));

@@ -312,17 +312,28 @@ SpaceMode.prototype.buildRenderer = function () {
   window.addEventListener("resize", this.onResize);
   this.sizeOverlay();
 
-  // touch-drag look
-  var el = this.renderer.domElement, drag = null, moved = 0;
-  function pt(e) { return e.touches ? e.touches[0] : e; }
-  this.onDown = function (e) { var p = pt(e); drag = { x: p.clientX, y: p.clientY }; moved = 0; };
+  /* touch-drag look + H15 tap classifier. The pan math is UNCHANGED (H13
+     restored); the tap decision now uses RAW PIXELS + duration via the
+     shared RE_TAP thresholds (the old gate accumulated in degrees, ~78 px —
+     effectively untested on the real event path). Synthetic mouse events
+     that iOS fires after a touch are suppressed so taps can't double-fire,
+     and touchcancel clears the gesture. */
+  // [H15 tap wiring SPACE start]
+  var el = this.renderer.domElement, drag = null, movedPx = 0, downAt = 0, lastTouchEnd = 0;
+  function pt(e) { return (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e; }
+  this.onDown = function (e) {
+    if (!e.touches && !e.changedTouches && Date.now() - lastTouchEnd < 700) return; // synthetic mouse
+    var p = pt(e);
+    drag = { x: p.clientX, y: p.clientY };
+    movedPx = 0; downAt = Date.now();
+  };
   this.onMove = function (e) {
     if (!drag) return;
     if (e.cancelable) e.preventDefault();
     var p = pt(e);
+    movedPx += Math.abs(p.clientX - drag.x) + Math.abs(p.clientY - drag.y);
     var scale = self.camera.fov / window.innerHeight; // deg per px
     var dx = (p.clientX - drag.x) * scale, dy = (p.clientY - drag.y) * scale;
-    moved += Math.abs(dx) + Math.abs(dy);
     if (self.lookMode === "drag" && !self.fly) {
       self.viewRa = (self.viewRa + dx + 360) % 360; // drag right = look left (sky pans with finger)
       self.viewDec = Math.max(-89, Math.min(89, self.viewDec + dy));
@@ -330,12 +341,18 @@ SpaceMode.prototype.buildRenderer = function () {
     drag = { x: p.clientX, y: p.clientY };
   };
   this.onUp = function (e) {
-    if (drag && moved < 6 && !self.fly) self.tapSelect(e);
+    if (e.changedTouches) lastTouchEnd = Date.now();
+    else if (Date.now() - lastTouchEnd < 700) { drag = null; return; } // synthetic mouse
+    var T = window.RE_TAP || { PX: 10, MS: 300 };
+    if (drag && movedPx < T.PX && (Date.now() - downAt) < T.MS && !self.fly) self.tapSelect(e);
     drag = null;
   };
+  this.onCancel = function () { drag = null; };
   el.addEventListener("mousedown", this.onDown); el.addEventListener("touchstart", this.onDown, { passive: true });
   window.addEventListener("mousemove", this.onMove); el.addEventListener("touchmove", this.onMove, { passive: false });
   window.addEventListener("mouseup", this.onUp); el.addEventListener("touchend", this.onUp);
+  el.addEventListener("touchcancel", this.onCancel);
+  // [H15 tap wiring SPACE end]
 };
 
 SpaceMode.prototype.sizeOverlay = function () {

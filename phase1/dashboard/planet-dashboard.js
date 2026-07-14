@@ -545,17 +545,23 @@ Dashboard.prototype.buildRenderer = function () {
   this.renderer.domElement.addEventListener("webglcontextlost", this.onCtxLost);
 
   // --- custom orbit controls (drag orbit + momentum, pinch/wheel zoom,
-  //     double-tap reset). Tailored for touch; avoids vendoring addons. ---
+  //     double-tap reset). Tailored for touch; avoids vendoring addons.
+  //     H15 adds a raw-pixel tap classifier on top: a short, near-still
+  //     touch is a TAP and hit-tests the moons; a real drag orbits as
+  //     before (orbit math unchanged). ---
+  // [H15 tap wiring DASH start]
   var elc = this.renderer.domElement;
-  var drag = null, pinch = null, lastTap = 0;
-  function pt(e, i) { return e.touches ? e.touches[i || 0] : e; }
+  var drag = null, pinch = null, lastTap = 0, movedPx = 0, downAt = 0, lastTouchEnd = 0;
+  function pt(e, i) { return (e.touches && e.touches[i || 0]) || (e.changedTouches && e.changedTouches[i || 0]) || e; }
   this.onDown = function (e) {
+    if (!e.changedTouches && !e.touches && Date.now() - lastTouchEnd < 700) return; // synthetic mouse
     if (e.touches && e.touches.length === 2) {
       pinch = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
       drag = null; return;
     }
     var p = pt(e);
     drag = { x: p.clientX, y: p.clientY };
+    movedPx = 0; downAt = Date.now();
     self.velYaw = self.velPitch = 0;
     var now = Date.now();
     if (now - lastTap < 320) self.resetView();
@@ -570,13 +576,24 @@ Dashboard.prototype.buildRenderer = function () {
     }
     if (!drag) return;
     var p = pt(e);
+    movedPx += Math.abs(p.clientX - drag.x) + Math.abs(p.clientY - drag.y);
     var dx = (p.clientX - drag.x) / window.innerHeight * 2.6;
     var dy = (p.clientY - drag.y) / window.innerHeight * 2.6;
     self.yaw -= dx; self.pitch = THREE.MathUtils.clamp(self.pitch - dy, -1.45, 1.45);
     self.velYaw = -dx; self.velPitch = -dy;
     drag = { x: p.clientX, y: p.clientY };
   };
-  this.onUp = function () { drag = null; pinch = null; };
+  this.onUp = function (e) {
+    if (e && e.changedTouches) lastTouchEnd = Date.now();
+    else if (Date.now() - lastTouchEnd < 700) { drag = null; pinch = null; return; }
+    var T = window.RE_TAP || { PX: 10, MS: 300 };
+    if (drag && e && movedPx < T.PX && (Date.now() - downAt) < T.MS) {
+      var p = pt(e);
+      if (p && p.clientX != null) self.tapMoon(p.clientX, p.clientY);
+    }
+    drag = null; pinch = null;
+  };
+  this.onCancel = function () { drag = null; pinch = null; };
   this.onWheel = function (e) {
     e.preventDefault();
     self.dist = THREE.MathUtils.clamp(self.dist * (e.deltaY > 0 ? 1.1 : 0.9), 1.6, 60);
@@ -584,7 +601,9 @@ Dashboard.prototype.buildRenderer = function () {
   elc.addEventListener("mousedown", this.onDown); elc.addEventListener("touchstart", this.onDown, { passive: true });
   window.addEventListener("mousemove", this.onMove); elc.addEventListener("touchmove", this.onMove, { passive: false });
   window.addEventListener("mouseup", this.onUp); elc.addEventListener("touchend", this.onUp);
+  elc.addEventListener("touchcancel", this.onCancel);
   elc.addEventListener("wheel", this.onWheel, { passive: false });
+  // [H15 tap wiring DASH end]
 };
 
 Dashboard.prototype.resetView = function () { this.yaw = 0; this.pitch = 0; this.dist = this.baseDist; this.velYaw = this.velPitch = 0; };
@@ -881,6 +900,65 @@ Dashboard.prototype.updateStats = function () {
     "<table>" + rows.map(function (r) { return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td></tr>"; }).join("") + "</table>" +
     (moonNote ? '<p class="pdb-credit">' + moonNote + "</p>" : "") +
     '<div class="pdb-credit">' + CREDIT + "</div>";
+};
+
+/* ---------- clickable moons (H15) ----------
+   Facts from NASA planetary/moon fact sheets (diameter, orbital period,
+   mean orbital distance) — nssdc.gsfc.nasa.gov planetary fact sheets and
+   NASA moon pages. Earth's Moon opens its full dashboard instead. */
+var MOON_FACTS = {
+  Io:       { d: "3,643 km", p: "1.77 days",  a: "421,700 km",   fact: "The most volcanically active world in the Solar System — hundreds of volcanoes, some erupting dozens of km high, powered by Jupiter's relentless tidal squeezing." },
+  Europa:   { d: "3,122 km", p: "3.55 days",  a: "671,100 km",   fact: "Beneath its cracked ice shell lies a global salt-water ocean likely holding more water than all of Earth's oceans — a prime target in the search for life and the destination of NASA's Europa Clipper." },
+  Ganymede: { d: "5,268 km", p: "7.15 days",  a: "1,070,400 km", fact: "The largest moon in the Solar System — bigger than the planet Mercury — and the only moon known to generate its own magnetic field." },
+  Callisto: { d: "4,821 km", p: "16.7 days",  a: "1,882,700 km", fact: "One of the most heavily cratered bodies known; its ancient icy surface has barely changed in about four billion years." },
+  Titan:    { d: "5,150 km", p: "15.9 days",  a: "1,221,900 km", fact: "The only moon with a thick atmosphere: an orange nitrogen–methane haze over rivers, lakes and seas of liquid methane. Visited by Huygens (2005); NASA's Dragonfly rotorcraft is next." },
+  Rhea:     { d: "1,528 km", p: "4.52 days",  a: "527,100 km",   fact: "Saturn's second-largest moon — a heavily cratered, dirty snowball made mostly of water ice." },
+  Dione:    { d: "1,123 km", p: "2.74 days",  a: "377,400 km",   fact: "An icy moon streaked with bright 'wispy terrain' — the exposed faces of towering ice cliffs." },
+  Tethys:   { d: "1,062 km", p: "1.89 days",  a: "294,700 km",   fact: "Almost pure water ice, scarred by the giant impact crater Odysseus — about two-fifths of the moon's own diameter." },
+  Phobos:   { d: "~22 km",   p: "7.7 hours",  a: "9,376 km",     fact: "Orbits Mars faster than Mars rotates, and is spiraling slowly inward — in roughly 50 million years it will crash into Mars or be torn into a ring." },
+  Deimos:   { d: "~12 km",   p: "30.3 hours", a: "23,460 km",    fact: "A tiny, smooth, dust-blanketed moon; from the Martian surface it would look like little more than a bright star." }
+};
+
+/* Hit-test the rendered moons at their CURRENT projected positions.
+   Target radius = projected moon radius + margin, minimum 30 px. */
+Dashboard.prototype.tapMoon = function (x, y) {
+  if (window.RE_cardOpen && window.RE_cardOpen()) return; // card swallows taps
+  if (!this.moons || !this.moons.length || !this.scene) return;
+  var v = new THREE.Vector3(), w = window.innerWidth, h = window.innerHeight;
+  var best = null, bd = 1e9;
+  for (var i = 0; i < this.moons.length; i++) {
+    var m = this.moons[i];
+    v.copy(m.mesh.position).project(this.camera);
+    if (v.z > 1) continue;
+    var sx = (v.x + 1) / 2 * w, sy = (1 - v.y) / 2 * h;
+    var dCam = this.camera.position.distanceTo(m.mesh.position);
+    var rPx = dCam > 0 ? (m.mesh.scale.x / (Math.tan(this.camera.fov * D2R / 2) * dCam)) * (h / 2) : 0;
+    var hitR = Math.max(30, rPx + 10);
+    var d = Math.hypot(sx - x, sy - y);
+    if (d < hitR && d < bd) { bd = d; best = m; }
+  }
+  if (best) this.showMoonCard(best);
+};
+
+Dashboard.prototype.showMoonCard = function (m) {
+  var name = m.cfg.name;
+  if (name === "Moon" && window.RE_openDashboard) { window.RE_openDashboard("Moon"); return; }
+  var f = MOON_FACTS[name];
+  if (!f || !window.RE_showCard) return;
+  var tint = m.cfg.tint || [1, 1, 1];
+  var rgb = "rgb(" + tint.map(function (x) { return Math.round(x * 230); }).join(",") + ")";
+  window.RE_showCard({
+    glyphColor: rgb,
+    title: name,
+    subtitle: "moon of " + this.name + (m.cfg.approx ? " · position approximate (mean elements)" : " · position exact (live ephemeris)"),
+    rows: [
+      ["Diameter", f.d],
+      ["Orbital period", f.p],
+      ["Mean distance from " + this.name, f.a]
+    ],
+    desc: f.fact,
+    credit: "Facts: NASA planetary/moon fact sheets · Rendered with a generic tinted surface (real per-moon maps are a later handoff)"
+  });
 };
 
 /* ---------- Deep Time / Eras (H14) ---------- */
