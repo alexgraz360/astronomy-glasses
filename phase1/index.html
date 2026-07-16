@@ -122,6 +122,30 @@
   tr.below td { color: var(--muted); opacity: 0.65; }
   #obsline { color: var(--muted); font-size: 11px; margin-top: 8px; font-family: "SF Mono", ui-monospace, Menlo, monospace; }
 
+  /* Events panel (H18): upcoming sky events, soonest first. Same shell as
+     the Data/Targets panels (position, z-index, blur, --panel-top). */
+  #eventsPanel {
+    position: fixed; top: var(--panel-top, calc(env(safe-area-inset-top, 0px) + 96px));
+    left: 10px; right: 10px;
+    z-index: 15; background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 10px 12px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    max-height: calc(100vh - var(--panel-top, 96px) - 140px);
+    max-height: calc(100dvh - var(--panel-top, 96px) - 140px);
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+  }
+  #eventsPanel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.1px; color: var(--accent); margin: 0 0 8px; }
+  .evrow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .evrow:last-child { border-bottom: none; }
+  .evmain { flex: 1; min-width: 0; }
+  .evname { font-size: 13px; font-weight: 600; }
+  .evtime { font-size: 11px; color: var(--accent); margin-top: 1px;
+    font-family: "SF Mono", ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .evnote { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+  .evjump { border: 1px solid rgba(110,168,255,0.5); color: var(--accent); background: transparent;
+    border-radius: 999px; padding: 6px 13px; font-size: 12px; font-weight: 600; cursor: pointer; flex-shrink: 0; }
+  .evjump:active { transform: scale(0.96); }
+  #eventsMeta { color: var(--muted); font-size: 11px; margin-top: 8px; font-family: "SF Mono", ui-monospace, Menlo, monospace; }
+
   /* Tune panel */
   #tunePanel {
     position: fixed; bottom: calc(env(safe-area-inset-bottom, 0px) + 52px); left: 10px; right: 10px;
@@ -258,6 +282,7 @@
   <span id="st-cam" class="pill">CAM</span>
   <button id="btnSpace" class="tbtn" style="border-color:#6ea8ff;">🌌 Space</button>
   <button id="btnTargets" class="tbtn">Targets</button>
+  <button id="btnEvents" class="tbtn">📅 Events</button>
   <button id="btnData" class="tbtn on">Data</button>
   <button id="btnTune" class="tbtn">Tune</button>
   <button id="btnStars" class="tbtn on">Stars</button>
@@ -281,6 +306,12 @@
   </table>
   <div id="obsline">waiting for GPS fix&hellip;</div>
   <div id="dataMeta" style="color:var(--muted);font-size:11px;margin-top:4px;font-family:'SF Mono',ui-monospace,Menlo,monospace;">star catalog loading&hellip;</div>
+</div>
+
+<div id="eventsPanel" style="display:none;">
+  <h2>Upcoming sky events &mdash; local times &middot; Jump = time travel</h2>
+  <div id="eventsBody">computing&hellip;</div>
+  <div id="eventsMeta"></div>
 </div>
 
 <div id="tunePanel">
@@ -1479,6 +1510,211 @@ window.RE_attachTap = function (el, onTap) {
     isARPaused: function () { return arPaused; },
     debugOrientationEvent: onOrientation // feed synthetic events in tests (H12)
   };
+})();
+</script>
+<script>
+/* ======================= Events panel (H18) =======================
+   Upcoming sky events for the user's location, computed with Astronomy
+   Engine's own search functions (no hand-rolled ephemerides) + a small
+   curated meteor-shower table. Jump = the EXISTING Time Travel path
+   (SimClock.pause + SimClock.setTime — same calls as the time bar's Go).
+
+   ADDITIVE ONLY: this block talks to the app through globals the main
+   script already exposes (Astronomy, SimClock, RE.getObserver) and adds
+   its own toolbar/panel listeners, exactly like Data/Targets. It touches
+   nothing in the frozen H16 interaction layer (look/tap/pan). */
+(function () {
+  var btn = document.getElementById("btnEvents");
+  var panel = document.getElementById("eventsPanel");
+  var body = document.getElementById("eventsBody");
+  var meta = document.getElementById("eventsMeta");
+
+  var WINDOW_MS = 24 * 30.4375 * 86400e3; // ~24 months
+  var MAX_ROWS = 15;
+
+  /* Curated annual meteor showers — typical peak dates + radiant
+     constellation (IMO/AMS commonly-cited values; peaks drift a day or so
+     year to year, so rows are labeled "~typical peak"). */
+  var SHOWERS = [
+    { name: "Quadrantids",   m: 1,  d: 3,  con: "Boötes" },
+    { name: "Lyrids",        m: 4,  d: 22, con: "Lyra" },
+    { name: "Eta Aquariids", m: 5,  d: 6,  con: "Aquarius" },
+    { name: "Perseids",      m: 8,  d: 12, con: "Perseus" },
+    { name: "Orionids",      m: 10, d: 21, con: "Orion" },
+    { name: "Leonids",       m: 11, d: 17, con: "Leo" },
+    { name: "Geminids",      m: 12, d: 14, con: "Gemini" },
+    { name: "Ursids",        m: 12, d: 22, con: "Ursa Minor" }
+  ];
+  var FULL_NAMES = ["Wolf", "Snow", "Worm", "Pink", "Flower", "Strawberry",
+                    "Buck", "Sturgeon", "Corn", "Hunter's", "Beaver", "Cold"];
+
+  function fmtLocal(d) {
+    return d.toLocaleString([], { weekday: "short", month: "short", day: "numeric",
+      year: "numeric", hour: "numeric", minute: "2-digit" });
+  }
+  function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+  function moonAltAt(time, obs) {
+    var eq = Astronomy.Equator("Moon", time, obs, true, true);
+    return Astronomy.Horizon(time, obs, eq.ra, eq.dec, "normal").altitude;
+  }
+
+  function computeEvents(obs) {
+    var now = new Date();
+    var maxMs = now.getTime() + WINDOW_MS;
+    var out = [];
+    function push(date, name, note) {
+      if (date && date.getTime() > now.getTime() && date.getTime() < maxMs) {
+        out.push({ t: date, name: name, note: note });
+      }
+    }
+
+    // -- Moon phases (SearchMoonPhase: 0 = new, 180 = full) --
+    try {
+      var nm = Astronomy.SearchMoonPhase(0, now, 40);
+      if (nm) push(nm.date, "🌑 New Moon", "Darkest skies of the month — best night for faint stars and the Milky Way.");
+      var fm = Astronomy.SearchMoonPhase(180, now, 40);
+      if (fm) push(fm.date, "🌕 Full Moon", "The " + FULL_NAMES[fm.date.getMonth()] + " Moon — rises around sunset, up all night.");
+    } catch (e) { console.warn("events: moon phase", e); }
+
+    // -- Next lunar eclipse (visibility = Moon above horizon at peak) --
+    try {
+      var le = Astronomy.SearchLunarEclipse(now);
+      if (le) {
+        var visNote;
+        if (!obs) visNote = "Visibility unknown — waiting for GPS fix.";
+        else if (moonAltAt(le.peak, obs) > 0) visNote = "Visible from your location, weather permitting.";
+        else visNote = "Not visible from your location — the Moon is below the horizon at peak.";
+        push(le.peak.date, "🌘 " + cap(le.kind) + " Lunar Eclipse", visNote);
+      }
+    } catch (e) { console.warn("events: lunar eclipse", e); }
+
+    // -- Next solar eclipse: global event + honest local circumstances --
+    try {
+      var ge = Astronomy.SearchGlobalSolarEclipse(now);
+      var lse = null;
+      if (obs) {
+        lse = Astronomy.SearchLocalSolarEclipse(now, obs);
+        var guard = 0; // skip eclipses whose peak happens with the Sun below the local horizon
+        while (lse && lse.peak.altitude <= 0 && lse.peak.time.date.getTime() < maxMs && guard++ < 6) {
+          lse = Astronomy.NextLocalSolarEclipse(lse.peak.time, obs);
+        }
+      }
+      var sameEvent = ge && lse &&
+        Math.abs(ge.peak.date.getTime() - lse.peak.time.date.getTime()) < 2 * 86400e3;
+      if (ge && !sameEvent) {
+        push(ge.peak.date, "🌒 " + cap(ge.kind) + " Solar Eclipse",
+          obs ? "Not visible from your location. NEVER look at the Sun without eclipse glasses."
+              : "Visibility unknown — waiting for GPS fix. Never view the Sun unprotected.");
+      }
+      if (lse && lse.peak.altitude > 0) {
+        var pct = Math.round(lse.obscuration * 100);
+        push(lse.peak.time.date, "🌒 " + cap(lse.kind) + " Solar Eclipse — from your area",
+          (lse.kind === "total" ? "TOTALITY from your location! " :
+            pct + "% of the Sun covered from your location. ") +
+          "Eclipse glasses required at all times outside totality.");
+      }
+    } catch (e) { console.warn("events: solar eclipse", e); }
+
+    // -- Outer-planet oppositions (relative heliocentric longitude 0) --
+    var OPP_GLYPH = { Mars: "♂", Jupiter: "♃", Saturn: "♄" };
+    ["Mars", "Jupiter", "Saturn"].forEach(function (p) {
+      try {
+        var t = Astronomy.SearchRelativeLongitude(p, 0, now);
+        if (t) push(t.date, OPP_GLYPH[p] + " " + p + " at Opposition",
+          p + " is closest and brightest for the year — up all night, biggest in a telescope.");
+      } catch (e) { console.warn("events: opposition " + p, e); }
+    });
+
+    // -- Mercury/Venus greatest elongations --
+    ["Mercury", "Venus"].forEach(function (p) {
+      try {
+        var el = Astronomy.SearchMaxElongation(p, now);
+        if (el) push(el.time.date, (p === "Venus" ? "♀" : "☿") + " " + p + " Greatest Elongation",
+          Math.round(el.elongation) + "° from the Sun — best " +
+          (el.visibility === "morning" ? "before sunrise in the east." : "after sunset in the west."));
+      } catch (e) { console.warn("events: elongation " + p, e); }
+    });
+
+    // -- Meteor shower peaks (curated; jump lands ~1 AM local on peak night) --
+    var showerRows = [];
+    SHOWERS.forEach(function (s) {
+      for (var y = now.getFullYear(); y <= now.getFullYear() + 2; y++) {
+        var peak = new Date(y, s.m - 1, s.d, 1, 0, 0); // 1 AM local — radiant high after midnight
+        if (peak.getTime() > now.getTime() && peak.getTime() < maxMs) {
+          showerRows.push({ t: peak, name: "☄ " + s.name + " Meteors",
+            note: "~Typical annual peak · look toward " + s.con + " after midnight, away from lights." });
+          break; // next occurrence of this shower only
+        }
+      }
+    });
+    showerRows.sort(function (a, b) { return a.t - b.t; });
+    showerRows.slice(0, 4).forEach(function (r) { out.push(r); });
+
+    out.sort(function (a, b) { return a.t - b.t; });
+    return out.slice(0, MAX_ROWS);
+  }
+
+  // ---- render + jump ----
+  function render() {
+    var obs = window.RE && RE.getObserver ? RE.getObserver() : null;
+    var rows = computeEvents(obs);
+    body.innerHTML = "";
+    rows.forEach(function (r) {
+      var div = document.createElement("div");
+      div.className = "evrow";
+      var main = document.createElement("div");
+      main.className = "evmain";
+      var nameEl = document.createElement("div"); nameEl.className = "evname"; nameEl.textContent = r.name;
+      var timeEl = document.createElement("div"); timeEl.className = "evtime"; timeEl.textContent = fmtLocal(r.t);
+      var noteEl = document.createElement("div"); noteEl.className = "evnote"; noteEl.textContent = r.note;
+      main.appendChild(nameEl); main.appendChild(timeEl); main.appendChild(noteEl);
+      var jump = document.createElement("button");
+      jump.className = "evjump"; jump.textContent = "Jump";
+      jump.addEventListener("click", function () {
+        // Same Time-Travel path as the time bar's "Go": pause, set the instant.
+        SimClock.pause();
+        SimClock.setTime(r.t.getTime());
+        closePanel(); // reveal the sky at that moment
+      });
+      div.appendChild(main); div.appendChild(jump);
+      body.appendChild(div);
+    });
+    meta.textContent = obs
+      ? "for " + obs.latitude.toFixed(2) + "°, " + obs.longitude.toFixed(2) + "° · eclipse visibility checked for your spot · meteor peaks approximate"
+      : "no GPS fix yet — location-dependent visibility will fill in once GPS locks";
+  }
+
+  // ---- open/close (same pattern as Data/Targets; mutual exclusion both ways) ----
+  var others = [["btnData", "dataPanel"], ["btnTargets", "targetsPanel"]];
+  function closePanel() {
+    panel.style.display = "none";
+    btn.classList.remove("on");
+  }
+  btn.addEventListener("click", function () {
+    var show = panel.style.display === "none";
+    if (show) {
+      others.forEach(function (x) {
+        document.getElementById(x[1]).style.display = "none";
+        document.getElementById(x[0]).classList.remove("on");
+      });
+      body.textContent = "computing…";
+      panel.style.display = "block";
+      btn.classList.add("on");
+      setTimeout(render, 20); // paint first; eclipse searches can take ~100 ms
+    } else {
+      closePanel();
+    }
+  });
+  // If Data/Targets opens, close Events (their bindToggle predates this panel).
+  others.forEach(function (x) {
+    document.getElementById(x[0]).addEventListener("click", function () {
+      var p = document.getElementById(x[1]);
+      if (p.style.display !== "none") closePanel();
+    });
+  });
+
+  // Headless verification hook (mirrors the RE.debug* convention).
+  window.RE_eventsDebug = { compute: computeEvents };
 })();
 </script>
 <script type="module">
