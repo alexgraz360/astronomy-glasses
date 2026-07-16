@@ -44,9 +44,12 @@
     var orig = window.RE_openDashboard;
     if (typeof orig !== "function") { setTimeout(wrapSelection, 500); return; }
     window.RE_openDashboard = function (name) {
+      // Call the app FIRST: its synchronous prologue sets the AR-paused flag,
+      // which buildContext uses to decide whether a selection is still open.
+      var result = orig.apply(this, arguments);
       selectedName = name;
       publish();
-      return orig.apply(this, arguments);
+      return result;
     };
   }
   if (document.readyState === "complete") wrapSelection();
