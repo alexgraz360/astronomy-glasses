@@ -545,12 +545,17 @@ window.RE_attachTap = function (el, onTap) {
        Azimuth: 0 = true North, 90 = East, clockwise positive - SAME convention
          for Astronomy Engine's Horizon() output and iOS webkitCompassHeading.
        Altitude: degrees above horizon, negative below.
-       Device view direction (portrait, screen toward face, rear camera away):
-         view azimuth  = webkitCompassHeading (+ AZ_OFFSET_DEG)
-         view altitude = beta - 90 (+ ALT_OFFSET_DEG)
-           beta 0 = flat screen-up (camera at nadir, -90), beta 90 = upright
-           (camera at horizon, 0), beta 180 = flat screen-down (zenith, +90).
-       Roll (gamma) is intentionally IGNORED in v1 - hold the phone upright.
+       Device view direction (rear camera):
+         Derived from the full ROTATION MATRIX, not from any single Euler angle.
+         H19 replaced `beta - 90`, which was ambiguous and flipped - see the
+         block above oriMatrix() for why. The rear camera looks along device
+         -z, so:  look = R * (0,0,-1),  az = atan2(E,N),  alt = asin(Up).
+         AZ_OFFSET_DEG / ALT_OFFSET_DEG are still applied on top, at the
+         consumer (makeCamera), exactly as before.
+       Roll: as of H19 the device's roll about the view axis IS tracked, in
+         view.roll, so the overlay stays aligned in landscape and when the
+         wrist turns. az/alt keep their meaning; roll is purely additive and
+         Space Mode (which reads az/alt only) is unaffected.
      ========================================================================= */
   var DEFAULTS = {
     fov: 60,    // FOV_VERTICAL_DEG
@@ -591,7 +596,9 @@ window.RE_attachTap = function (el, onTap) {
   var tune = loadTune();
   var observer = null;            // Astronomy.Observer once GPS fixes
   var eph = [];                   // [{name, glyph, color, az, alt}]
-  var view = { az: null, alt: null };  // smoothed device view direction
+  // Smoothed device view direction. az/alt keep exactly the meaning they always
+  // had (Space Mode reads them); roll and headingHeld are ADDITIVE (H19).
+  var view = { az: null, alt: null, roll: 0, headingHeld: false };
   var started = false;
   var arPaused = false; // true while a 3D planet dashboard is open (Handoff 04)
 
@@ -901,11 +908,15 @@ window.RE_attachTap = function (el, onTap) {
     return pts[Math.round(deg / 22.5) % 16];
   }
 
-  /* Pinhole/gnomonic projection. Camera basis is built with zero roll
-     (portrait assumption): forward = view dir, right = horizontal 90 deg
-     clockwise from view azimuth, up = right x forward. ONE camera per frame
-     is shared by planets, stars, and constellation lines so a single Tune
-     calibration moves every layer together. */
+  /* Pinhole/gnomonic projection. forward = view dir; the up/right pair starts
+     at zero roll (up = right x forward, right horizontal and 90 deg clockwise
+     from the view azimuth) and is then ROLLED about the forward axis by
+     view.roll. Before H19 the roll term did not exist and the overlay was
+     drawn with world-up as screen-up always, so any landscape or wrist turn
+     drew the sky at the wrong angle over the camera image. Rodrigues reduces
+     to two terms here because right and up are perpendicular to forward.
+     ONE camera per frame is shared by planets, stars, and constellation lines
+     so a single Tune calibration moves every layer together. */
   function makeCamera(w, h) {
     if (view.az == null) return null;
     var vAz = wrap360(view.az + tune.azo);
@@ -913,6 +924,13 @@ window.RE_attachTap = function (el, onTap) {
     var fwd = enu(vAz, vAlt);
     var right = [Math.cos(vAz * D2R), -Math.sin(vAz * D2R), 0];
     var up = cross(right, fwd);
+    var r = (view.roll || 0) * D2R;
+    if (r) {
+      var cr = Math.cos(r), sr = Math.sin(r);
+      var fxu = cross(fwd, up);
+      up = norm3([up[0] * cr + fxu[0] * sr, up[1] * cr + fxu[1] * sr, up[2] * cr + fxu[2] * sr]);
+      right = cross(fwd, up);
+    }
     return {
       fx: fwd[0], fy: fwd[1], fz: fwd[2],
       rx: right[0], ry: right[1], rz: right[2],
@@ -1107,25 +1125,210 @@ window.RE_attachTap = function (el, onTap) {
     }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
   }
 
-  var oriSeen = false;
-  function onOrientation(e) {
-    var rawHeading = null;
-    if (typeof e.webkitCompassHeading === "number" && !isNaN(e.webkitCompassHeading)) {
-      rawHeading = e.webkitCompassHeading;      // iOS: true heading, 0=N clockwise
-    } else if (e.alpha != null) {
-      rawHeading = wrap360(360 - e.alpha);      // non-iOS fallback
-    }
-    if (rawHeading == null || e.beta == null) return;
-    if (!oriSeen) { oriSeen = true; setPill(els["st-ori"], "good", "ORI live"); }
+  /* =========================================================================
+     H19 — the look direction comes from a ROTATION MATRIX, not from `beta`.
 
-    // H13: altitude clamped to ±89° so the look direction can never cross
-    // the zenith/nadir pole and invert (the original H12 bug), while the
-    // horizontal compass path stays exactly as it always was. Shared by AR
-    // and Space Mode (both read this smoothed view state).
-    var rawAlt = Math.max(-89, Math.min(89, e.beta - 90)); // portrait: camera altitude
-    if (view.az == null) { view.az = rawHeading; view.alt = rawAlt; return; }
-    view.az = wrap360(view.az + angDiff(rawHeading, view.az) * SMOOTH);
-    view.alt = view.alt + (rawAlt - view.alt) * SMOOTH;
+     WHY THE OLD PATH FLIPPED. `view altitude = beta - 90` reads one Euler
+     angle out of a three-angle representation that is not unique. The spec
+     constrains gamma to ±90, so when the true orientation would need a gamma
+     outside that range the browser keeps it in range by adding ~180 to beta
+     and negating gamma. The device has not moved; the NUMBERS jump. Any roll
+     in the wrist walks you toward that boundary, which is why it bit around
+     head height rather than at the zenith. H13 clamped the OUTPUT to ±89 so
+     the view could not invert - but beta was still flipping underneath, so
+     the view pinned at the limit and then jumped. Clamping an unstable input
+     does not stabilise it, and that clamp is now GONE rather than widened.
+
+     WHAT REPLACES IT. Build the full rotation and rotate a vector by it. A
+     direction vector has no gimbal singularity, so altitude passes smoothly
+     through the zenith and down the other side and no orientation produces a
+     discontinuity. All our own code - no dependency is added to the AR path.
+     ========================================================================= */
+
+  // R maps DEVICE coords -> WORLD coords for the W3C intrinsic Z-X'-Y'' order,
+  // i.e. R = Rz(alpha) * Rx(beta) * Ry(gamma). Row-major, 9 entries.
+  //   World  : x=East, y=North, z=Up.
+  //   Device : x=right across the screen, y=up the screen, z=out of the screen
+  //            toward the viewer - ALWAYS in the screen's NATURAL orientation.
+  // That last point is why screen.orientation.angle is a separate correction
+  // below and is deliberately NOT folded in here: the device frame does not
+  // rotate when the screen orientation changes.
+  function oriMatrix(alphaDeg, betaDeg, gammaDeg) {
+    var a = alphaDeg * D2R, b = betaDeg * D2R, g = gammaDeg * D2R;
+    var ca = Math.cos(a), sa = Math.sin(a);
+    var cb = Math.cos(b), sb = Math.sin(b);
+    var cg = Math.cos(g), sg = Math.sin(g);
+    return [
+      ca * cg - sa * sb * sg, -sa * cb, ca * sg + sa * sb * cg,
+      sa * cg + ca * sb * sg, ca * cb, sa * sg - ca * sb * cg,
+      -cb * sg, sb, cb * cg
+    ];
+  }
+  function matMulVec(R, v) {
+    return [R[0] * v[0] + R[1] * v[1] + R[2] * v[2],
+            R[3] * v[0] + R[4] * v[1] + R[5] * v[2],
+            R[6] * v[0] + R[7] * v[1] + R[8] * v[2]];
+  }
+  function norm3(v) {
+    var m = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) || 1;
+    return [v[0] / m, v[1] / m, v[2] / m];
+  }
+  var R2D_ = 180 / Math.PI;
+  function azOf(v) { return wrap360(Math.atan2(v[0], v[1]) * R2D_); }   // x=E, y=N
+  function altOf(v) { return Math.asin(Math.max(-1, Math.min(1, v[2]))) * R2D_; }
+
+  // Screen "up" expressed in DEVICE coords, for screen.orientation.angle.
+  function screenUpDevice(angleDeg) {
+    var t = (angleDeg || 0) * D2R;
+    return [-Math.sin(t), Math.cos(t), 0];
+  }
+  var _screenAngleOverride = null;   // desktop harness only; null on device
+  function screenAngle() {
+    if (_screenAngleOverride != null) return _screenAngleOverride;
+    if (screen && screen.orientation && typeof screen.orientation.angle === "number") {
+      return screen.orientation.angle;
+    }
+    return (typeof window.orientation === "number") ? wrap360(window.orientation) : 0;
+  }
+
+  /* PART 2 — the compass cannot be trusted while you are pointing up.
+
+     ⚠️ THIS NUMBER IS A GUESS. It is NOT measured, and the attempt to measure
+     it failed honestly rather than producing a number to quote.
+
+     The reasoning: webkitCompassHeading is the magnetic vector projected onto
+     the horizontal plane, so as the device tilts skyward that projection
+     shrinks and the heading it yields should degrade - the usual estimate is
+     error amplifying like 1/cos(alt), which would pass 3x around 70 deg.
+
+     WHY THAT ESTIMATE IS UNVERIFIED HERE. The desktop harness perturbs a
+     synthetic device orientation and reads the resulting azimuth swing, and it
+     measures a FLAT 1.00x at every altitude from 0 to 85 - not 1/cos(alt).
+     That is correct and it is the point: azimuth is the angle about the
+     vertical axis, so a yaw error moves it by the same amount at any altitude.
+     The degradation being guarded against lives in the DEVICE's magnetometer/
+     gravity sensor fusion, which no synthetic stream can reproduce. So the
+     geometry cannot justify this threshold, and nothing here should be read as
+     though it did.
+
+     What IS verified (see the Build Log): the hold BEHAVIOUR. Below the
+     threshold the heading tracks; above it a deliberately wandering compass
+     (fed 25.9, 50.9, 77.2 while truth was 30) moves the view by 0.00 deg
+     because the offset is held; coming back down it resumes correcting. And a
+     negative webkitCompassAccuracy is refused outright.
+
+     TO SETTLE IT: on the device, point at a fixed landmark and walk the phone
+     up in 5 deg steps, logging webkitCompassHeading and webkitCompassAccuracy.
+     The altitude where the heading starts wandering by more than a few degrees
+     IS the threshold. Until then 70 is a placeholder chosen to be conservative,
+     and the on-screen "coasting" state exists so the app is honest about it. */
+  var COMPASS_MAX_ALT_DEG = 70;
+
+  var oriSeen = false;
+  var headingOffset = null;   // world-yaw -> true-north correction, held when coasting
+  var lookSm = null;          // smoothed look vector (see the smoothing note below)
+  var oriPillState = "";      // only touch the DOM when the state actually changes
+  function setOriPill(kind, text) {
+    if (oriPillState === kind + text) return;
+    oriPillState = kind + text;
+    setPill(els["st-ori"], kind, text);
+  }
+
+  function onOrientation(e) {
+    if (e.alpha == null || e.beta == null) return;
+    oriSeen = true;
+
+    var R = oriMatrix(e.alpha, e.beta, e.gamma || 0);
+    var look = norm3(matMulVec(R, [0, 0, -1]));       // rear camera looks along -z
+    var alt = altOf(look);
+
+    /* ---- north reference (PART 4) ---------------------------------------
+       ONLY iOS webkitCompassHeading is used, because only it is a TRUE
+       heading - Apple derives it from location. The old code fell back to
+       wrap360(360 - e.alpha), which on plain `deviceorientation` is not north
+       at all but an arbitrary zero fixed to wherever the page happened to
+       start, and on `deviceorientationabsolute` is MAGNETIC north, 15-20 deg
+       off true in parts of the world. Both were silent: the sky was drawn
+       confidently in the wrong place. That fallback is now REFUSED rather than
+       corrected - the same call made for Navigator's arrow, and for the same
+       reason: vendoring a World Magnetic Model would add coefficients that
+       expire every five years, trading a known error for a hidden one.
+       Without a true heading the azimuth is RELATIVE, and the ORI pill says so
+       instead of implying a compass fix that does not exist.
+
+       Relationship to AZ_OFFSET_DEG (tune.azo, the +/- buttons): that is a
+       MANUAL calibration applied later, at makeCamera, on top of whatever
+       reference is active here. The two do stack, deliberately and visibly -
+       azo trims residual compass bias, it is not a second north source. When
+       coasting (below) azo still applies, so a calibration made at the horizon
+       stays applied while looking up. */
+    var trueHeading = null;
+    if (typeof e.webkitCompassHeading === "number" && !isNaN(e.webkitCompassHeading)) {
+      var acc = e.webkitCompassAccuracy;
+      var accOk = !(typeof acc === "number" && acc < 0);   // negative = invalid
+      if (accOk && Math.abs(alt) <= COMPASS_MAX_ALT_DEG) trueHeading = e.webkitCompassHeading;
+    }
+    if (trueHeading != null) {
+      // The matrix already gives a yaw; the compass says what that yaw really
+      // is. Store the difference so we can coast on it when we stop believing
+      // the compass, instead of consuming a heading that is wandering.
+      headingOffset = angDiff(trueHeading, azOf(look));
+      view.headingHeld = false;
+      setOriPill("good", "ORI live");
+    } else if (headingOffset != null) {
+      view.headingHeld = true;      // coasting on the last good offset
+      setOriPill("warn", "ORI held");
+    } else {
+      // No true heading has EVER arrived, so azimuth is relative to wherever
+      // this session started. Say so rather than drawing a confident sky.
+      setOriPill("warn", "ORI relative");
+    }
+    var off = headingOffset || 0;
+
+    // ---- roll (PART 3) ---------------------------------------------------
+    var upWorld = matMulVec(R, screenUpDevice(screenAngle()));
+    var rightZero = [Math.cos(azOf(look) * D2R), -Math.sin(azOf(look) * D2R), 0];
+    var upZero = cross(rightZero, look);
+    var rollRaw = Math.atan2(dot(cross(upZero, upWorld), look), dot(upZero, upWorld)) * R2D_;
+
+    /* SMOOTHING: the look VECTOR is smoothed and az/alt are derived from the
+       result, rather than az and alt being smoothed as independent scalars.
+
+       MEASURED, and the result is narrower than the guess that prompted it.
+       The suspicion going in was that scalar smoothing would reintroduce a
+       DISCONTINUITY near the pole and that quaternion slerp might be needed.
+       Neither is true. Measuring the reconstructed direction - the thing
+       makeCamera actually rebuilds from az/alt - both schemes stay continuous,
+       and the vector form is simply smoother, by about 2.8x:
+
+         sweep                       vector    scalar   (max direction step)
+         through the zenith 80->100   0.50 deg  1.41 deg
+         horizon -> zenith            4.97 deg 13.93 deg
+         grazing the pole 88->92      0.10 deg  0.28 deg
+
+       Lag against the true direction is identical (1.5 deg on the zenith pass),
+       so this is smoothness, not accuracy. What scalar smoothing does do is
+       transiently pair an az with an alt that describe a direction slightly off
+       the physical path, because it is filtering two coordinates of a chart
+       that is singular at the pole rather than filtering the thing itself.
+
+       Note the RAW azimuth genuinely jumps 0 -> 180 crossing the zenith. That
+       is the az/alt chart, not a bug, and it cancels against altitude so the
+       direction stays continuous - which is exactly why the step is measured on
+       the direction and not on az. Full quaternion slerp is NOT needed: only a
+       direction plus a separate scalar roll is carried, never a full
+       orientation, so a normalised vector lerp is the right tool. */
+    if (lookSm == null) {
+      lookSm = look;
+      view.roll = rollRaw;
+    } else {
+      lookSm = norm3([lookSm[0] + (look[0] - lookSm[0]) * SMOOTH,
+                      lookSm[1] + (look[1] - lookSm[1]) * SMOOTH,
+                      lookSm[2] + (look[2] - lookSm[2]) * SMOOTH]);
+      view.roll = view.roll + angDiff(rollRaw, view.roll) * SMOOTH;   // wrap-aware
+    }
+    view.az = wrap360(azOf(lookSm) + off);
+    view.alt = altOf(lookSm);
   }
 
   function startOrientation() {
@@ -1473,6 +1676,21 @@ window.RE_attachTap = function (el, onTap) {
       els.obsline.textContent = "obs (debug) " + lat + ", " + lon;
     },
     debugSetView: function (az, alt) { view.az = az; view.alt = alt; },
+    // H19 orientation harness: drives the REAL onOrientation() with a synthetic
+    // event so the maths is tested as shipped, not as re-implemented in a test.
+    debugOrientation: function (o) {
+      onOrientation(o);
+      return { az: view.az, alt: view.alt, roll: view.roll, held: view.headingHeld };
+    },
+    debugOriReset: function (screenAngleDeg) {
+      lookSm = null; headingOffset = null; oriSeen = true;
+      view.az = null; view.alt = null; view.roll = 0; view.headingHeld = false;
+      _screenAngleOverride = (screenAngleDeg == null ? null : screenAngleDeg);
+    },
+    debugOriMatrix: function (a, b, g) { return oriMatrix(a, b, g); },
+    debugLookVec: function (a, b, g) { return norm3(matMulVec(oriMatrix(a, b, g), [0, 0, -1])); },
+    debugCompassMaxAlt: function () { return COMPASS_MAX_ALT_DEG; },
+    debugCamera: function () { return makeCamera(window.innerWidth, window.innerHeight); },
     debugProject: function (az, alt) { return project(az, alt, window.innerWidth, window.innerHeight); },
     debugStarTick: function () { starTick(); return { stars: starDb && starDb.ready, lines: lineDb && lineDb.ready, art: !!(artDb && artDb.ready) }; },
     debugLoadArt: function () { loadArtData(); return artLoading || !!artDb; },

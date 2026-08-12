@@ -612,9 +612,18 @@ SpaceMode.prototype.updatePlanets = function () {
    into visible jitter). Per the H13 handoff, the pre-H12 az/alt path below
    is restored BYTE-EXACTLY from commit cbfd423 (it was world-locked, 1:1,
    correct-direction, and smoothed via the AR handler's shared view state).
-   The original vertical pole-flip is instead fixed minimally at the shared
-   source: the AR orientation handler now clamps altitude to ±89° so the
-   view can never cross the pole and invert (see index.html onOrientation). */
+   The original vertical pole-flip is fixed at the shared source, in the AR
+   orientation handler (see index.html onOrientation).
+
+   H19 UPDATE: that fix used to be a ±89° clamp on altitude. It is now a proper
+   quaternion/matrix derivation and THE CLAMP IS GONE, so view.alt can reach
+   exactly ±90 where it previously could not. Nothing here needed to change —
+   this path reads only view.az/view.alt and their meaning is unchanged — but
+   note the consequence at the pole: at alt = ±90 the `dir` computed below is
+   exactly parallel to `up`, so camera.lookAt() is degenerate in roll. Verified
+   on three r185: it does NOT produce NaN (lookAt nudges by ~1e-4 internally),
+   it just means the roll about the view axis is arbitrary for that instant.
+   Left alone deliberately rather than reintroducing a clamp upstream. */
 SpaceMode.prototype.applyCamera = function () {
   var dir, up;
   var view = this.opts.getView ? this.opts.getView() : null;
