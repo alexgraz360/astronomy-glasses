@@ -598,7 +598,7 @@ window.RE_attachTap = function (el, onTap) {
   var eph = [];                   // [{name, glyph, color, az, alt}]
   // Smoothed device view direction. az/alt keep exactly the meaning they always
   // had (Space Mode reads them); roll and headingHeld are ADDITIVE (H19).
-  var view = { az: null, alt: null, roll: 0, headingHeld: false };
+  var view = { az: null, alt: null, roll: 0, headingHeld: false, headingGate: "" };
   var started = false;
   var arPaused = false; // true while a 3D planet dashboard is open (Handoff 04)
 
@@ -1222,10 +1222,50 @@ window.RE_attachTap = function (el, onTap) {
      The altitude where the heading starts wandering by more than a few degrees
      IS the threshold. Until then 70 is a placeholder chosen to be conservative,
      and the on-screen "coasting" state exists so the app is honest about it. */
-  var COMPASS_MAX_ALT_DEG = 70;
+  /* ⚠️ H20 (2026-08-25) — 70 WAS MEASURED IN THE FIELD, AND IT WAS TOO HIGH.
+
+     Everything above is still true: the geometry cannot justify a threshold,
+     and the synthetic harness measures a flat 1.00x amplification because the
+     degradation lives in the DEVICE's sensor fusion. But 70 has now been tested
+     the only way it could be — outdoors, on hardware — and it failed:
+
+       "as im slowly moving up or down, its slightly shifting left or right"
+       "even going up like 3/4 of the screen gives trouble"
+       "going down isnt too bad its just up"
+
+     Three quarters of the screen is roughly 65-70 deg. That is not a
+     coincidence, it is the threshold being described. Below 70 a badly
+     degraded heading was still being folded into headingOffset on EVERY
+     event, so each tilt change slid the sky sideways — altitude leaking into
+     azimuth. "Down is fine, up is bad" fits: tilting down keeps more of the
+     magnetic field in the horizontal plane in normal handheld use.
+
+     35 IS STILL A HYPOTHESIS, not a measurement. It is half of a number known
+     to be too generous, chosen to sit clearly below where the reported trouble
+     starts. The device pass is what confirms or moves it. What HAS changed is
+     that the angle is no longer the only gate: see COMPASS_MAX_ACCURACY_DEG
+     and the stability window below. A single good-looking sample at 35 deg can
+     still be garbage, so one is no longer enough. */
+  var COMPASS_MAX_ALT_DEG = 35;
+
+  /* Reject a reading whose own reported accuracy is worse than this. iOS gives
+     webkitCompassAccuracy in degrees; negative means invalid outright. 20 deg
+     is a sane upper bound for "usable for pointing at the sky" — also a
+     hypothesis, and also cheap to change. */
+  var COMPASS_MAX_ACCURACY_DEG = 20;
+
+  /* Multi-sample stability. A heading must hold still across this many
+     consecutive accepted samples, within this spread, before it is allowed to
+     move headingOffset. This is the gate that a single lucky sample cannot
+     pass, and it is the one most likely to catch the field symptom: a compass
+     that is wandering produces a wide spread even when each individual reading
+     looks plausible. */
+  var COMPASS_STABLE_SAMPLES = 5;
+  var COMPASS_STABLE_SPREAD_DEG = 8;
 
   var oriSeen = false;
   var headingOffset = null;   // world-yaw -> true-north correction, held when coasting
+  var headingWindow = [];     // H20: recent accepted headings, for the stability gate
   var lookSm = null;          // smoothed look vector (see the smoothing note below)
   var oriPillState = "";      // only touch the DOM when the state actually changes
   function setOriPill(kind, text) {
@@ -1262,11 +1302,42 @@ window.RE_attachTap = function (el, onTap) {
        azo trims residual compass bias, it is not a second north source. When
        coasting (below) azo still applies, so a calibration made at the horizon
        stays applied while looking up. */
+    /* H20 — THREE GATES, not one. The angle alone was the H19 gate and the
+       field showed it is not enough. A reading must now pass all three before
+       it is allowed to move headingOffset:
+         1. altitude at or below COMPASS_MAX_ALT_DEG
+         2. its own reported accuracy is valid and within COMPASS_MAX_ACCURACY_DEG
+         3. it has held still across COMPASS_STABLE_SAMPLES consecutive readings
+       Failing any gate does not blank the view — it COASTS on the last good
+       offset and lets the rotation matrix carry relative motion, which is the
+       behaviour H19 already had. It just started coasting far too late. */
     var trueHeading = null;
+    var gateReason = "";
     if (typeof e.webkitCompassHeading === "number" && !isNaN(e.webkitCompassHeading)) {
       var acc = e.webkitCompassAccuracy;
-      var accOk = !(typeof acc === "number" && acc < 0);   // negative = invalid
-      if (accOk && Math.abs(alt) <= COMPASS_MAX_ALT_DEG) trueHeading = e.webkitCompassHeading;
+      var accOk = !(typeof acc === "number" && (acc < 0 || acc > COMPASS_MAX_ACCURACY_DEG));
+      var altOk = Math.abs(alt) <= COMPASS_MAX_ALT_DEG;
+      if (!altOk) gateReason = "alt";
+      else if (!accOk) gateReason = "acc";
+      if (altOk && accOk) {
+        // Gate 3: stability. Keep a short window of recent headings and require
+        // them to agree before believing any of them.
+        headingWindow.push(e.webkitCompassHeading);
+        if (headingWindow.length > COMPASS_STABLE_SAMPLES) headingWindow.shift();
+        if (headingWindow.length < COMPASS_STABLE_SAMPLES) gateReason = "settling";
+        else {
+          // Spread measured wrap-aware against the newest sample, so 359 and 1
+          // count as 2 degrees apart rather than 358.
+          var ref = headingWindow[headingWindow.length - 1], spread = 0;
+          for (var wi = 0; wi < headingWindow.length; wi++) {
+            spread = Math.max(spread, Math.abs(angDiff(headingWindow[wi], ref)));
+          }
+          if (spread > COMPASS_STABLE_SPREAD_DEG) gateReason = "unstable";
+          else trueHeading = ref;
+        }
+      } else {
+        headingWindow.length = 0;   // a failed gate invalidates the window
+      }
     }
     if (trueHeading != null) {
       // The matrix already gives a yaw; the compass says what that yaw really
@@ -1274,8 +1345,10 @@ window.RE_attachTap = function (el, onTap) {
       // the compass, instead of consuming a heading that is wandering.
       headingOffset = angDiff(trueHeading, azOf(look));
       view.headingHeld = false;
+      view.headingGate = "";
       setOriPill("good", "ORI live");
     } else if (headingOffset != null) {
+      view.headingGate = gateReason;
       view.headingHeld = true;      // coasting on the last good offset
       setOriPill("warn", "ORI held");
     } else {
@@ -1680,16 +1753,18 @@ window.RE_attachTap = function (el, onTap) {
     // event so the maths is tested as shipped, not as re-implemented in a test.
     debugOrientation: function (o) {
       onOrientation(o);
-      return { az: view.az, alt: view.alt, roll: view.roll, held: view.headingHeld };
+      return { az: view.az, alt: view.alt, roll: view.roll, held: view.headingHeld, gate: view.headingGate };
     },
     debugOriReset: function (screenAngleDeg) {
-      lookSm = null; headingOffset = null; oriSeen = true;
-      view.az = null; view.alt = null; view.roll = 0; view.headingHeld = false;
+      lookSm = null; headingOffset = null; headingWindow.length = 0; oriSeen = true;
+      view.az = null; view.alt = null; view.roll = 0; view.headingHeld = false; view.headingGate = "";
       _screenAngleOverride = (screenAngleDeg == null ? null : screenAngleDeg);
     },
     debugOriMatrix: function (a, b, g) { return oriMatrix(a, b, g); },
     debugLookVec: function (a, b, g) { return norm3(matMulVec(oriMatrix(a, b, g), [0, 0, -1])); },
     debugCompassMaxAlt: function () { return COMPASS_MAX_ALT_DEG; },
+    debugCompassGates: function () { return { maxAlt: COMPASS_MAX_ALT_DEG, maxAcc: COMPASS_MAX_ACCURACY_DEG,
+      stableSamples: COMPASS_STABLE_SAMPLES, stableSpread: COMPASS_STABLE_SPREAD_DEG }; },
     debugCamera: function () { return makeCamera(window.innerWidth, window.innerHeight); },
     debugProject: function (az, alt) { return project(az, alt, window.innerWidth, window.innerHeight); },
     debugStarTick: function () { starTick(); return { stars: starDb && starDb.ready, lines: lineDb && lineDb.ready, art: !!(artDb && artDb.ready) }; },
