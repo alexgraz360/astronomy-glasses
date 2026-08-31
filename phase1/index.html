@@ -563,6 +563,13 @@ window.RE_attachTap = function (el, onTap) {
     alto: 0     // ALT_OFFSET_DEG
   };
   var SMOOTH = 0.25;
+
+  /* H20: the constellation art layer is pinned OFF at every load, overriding a
+     persisted ON, until the additive/no-alpha asset problem is fixed. Declared
+     HERE rather than beside the other art constants because loadLayers() runs
+     immediately below and a later `var` would hoist without its value, leaving
+     the check reading undefined. Full reasoning at ART_MAX_EXTENT_REL. */
+  var ART_PINNED_OFF = true;
   var EPHEMERIS_INTERVAL_MS = 1000; // recompute planet az/alt 1x/sec (bodies move slowly)
 
   /* ---- Star catalog constants (Handoff 03) ----
@@ -651,6 +658,13 @@ window.RE_attachTap = function (el, onTap) {
         s.below = s.below === true; // added H05; older saves lack it -> default OFF
         s.art = s.art === true;     // added H12; default OFF
         s.dbg = s.dbg !== false;    // added H16; default ON until sign-off
+        /* H20: ART IS PINNED OFF AT EVERY LOAD, overriding a persisted ON.
+           Not a default — a default would not have helped, because anyone who
+           had already switched it on has `art:true` in localStorage and would
+           keep getting it. The toggle still works, so it can be switched on
+           deliberately to look at it; it simply will not come back on its own
+           next session. Remove this line to unpin. See ART_PINNED_OFF. */
+        if (ART_PINNED_OFF) s.art = false;
         return s;
       }
     } catch (e) {}
@@ -1055,8 +1069,54 @@ window.RE_attachTap = function (el, onTap) {
   /* Max projected figure extent as a fraction of the viewport diagonal. Above
      this the figure is culled rather than drawn — see the long note in drawArt
      for the measurements behind 2.5 and why the metric is viewport-relative
-     rather than raw affine scale. PROVISIONAL pending a device pass. */
+     rather than raw affine scale.
+
+     ⚠️ THIS THRESHOLD IS KNOWN INSUFFICIENT — see ART_PINNED_OFF below. It is
+     left in place because it does remove the worst cases, not because it works. */
   var ART_MAX_EXTENT_REL = 2.5;
+
+  /* ART IS PINNED OFF (2026-08-25), after a second device pass showed the scale
+     cull above is not enough. Alex, on an iPhone, indoors, at az 298 / alt 5:
+     large translucent wedges with hard straight edges still cutting across the
+     view. Measured on the deployed build at his viewport (430x930):
+
+       Lyr 3.01  CULLED       UMa 2.39  DRAWING      Lib 1.78  DRAWING
+       Leo 1.23  DRAWING      Vir 1.16  DRAWING      Boo 0.83  DRAWING
+
+     Ursa Major drawn at 2.4x his whole screen diagonal, Libra at 1.8x, six
+     figures compositing additively at once, and the threshold let them through.
+
+     THREE THINGS ARE WRONG, and the third is why a number cannot fix it:
+
+     1. The metric normalises by viewport DIAGONAL. The projection scales with
+        viewport HEIGHT. Those diverge when the aspect ratio changes: the same
+        scene measured 1.63 at 1280x720 and 3.01 at 430x930, a factor of 1.85.
+        Normalising by height would fix that, and is worth doing when this is
+        revisited.
+     2. 2.5 was chosen from a gap that does not generalise. On the earlier
+        screenshots legitimate figures topped out at 1.443 and offenders sat at
+        3.3-8.4, so 2.5 looked safe. At this view the offenders sit at 1.78-2.39,
+        inside that supposed gap. Catching them needs ~1.6, which is on top of
+        the 1.443 legitimate ceiling.
+     3. THE ROOT CAUSE IS NOT SCALE. The art composites with "lighter", i.e.
+        additively, and the assets are .jpg with NO ALPHA. Measured: 65-77% of
+        every image is exact black, so over a dark sky the addition really is
+        near zero and the figure blends — which is why this looked fine outdoors
+        and looks broken in a lit room. The hard straight edges are the image
+        rectangle where the artwork is non-black right at the boundary (Orion's
+        corner reaches 147, Cygnus 160). No scale threshold addresses any of
+        that.
+
+     THE ACTUAL FIX is alpha-capable assets, so black is TRANSPARENT rather than
+     ADDED. That is an asset re-encode and belongs in its own chunk.
+
+     Until then the layer is pinned off rather than shipping a fifth guess. The
+     toggle still works for anyone who wants to look.
+
+     ⚠️ The flag itself is declared much earlier, next to DEFAULTS, because
+     loadLayers() runs long before this point. Declaring it here would hoist the
+     var but not the assignment, so the check would read undefined, and the
+     layer would silently fail to pin. Set it to false there to unpin. */
   var ART_KEEP_MS = 30000;
   var artDb = null, artLoading = false;
   function loadArtData() {
