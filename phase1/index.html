@@ -1052,6 +1052,11 @@ window.RE_attachTap = function (el, onTap) {
      visibility and are dropped again after ART_KEEP_MS out of view. ---- */
   var ART_ALPHA = 0.28;       // over the live camera; slightly conservative
   var ART_ALPHA_BELOW = 0.12; // ghosted when fully below horizon (Below mode)
+  /* Max projected figure extent as a fraction of the viewport diagonal. Above
+     this the figure is culled rather than drawn — see the long note in drawArt
+     for the measurements behind 2.5 and why the metric is viewport-relative
+     rather than raw affine scale. PROVISIONAL pending a device pass. */
+  var ART_MAX_EXTENT_REL = 2.5;
   var ART_KEEP_MS = 30000;
   var artDb = null, artLoading = false;
   function loadArtData() {
@@ -1450,6 +1455,18 @@ window.RE_attachTap = function (el, onTap) {
   resizeCanvas();
 
   var _pa = { x: 0, y: 0 }, _pb = { x: 0, y: 0 };
+  /* Projected extent of a figure's image rect, as a fraction of the viewport
+     diagonal. The affine maps the image rect to a parallelogram; its longer
+     diagonal is the extent. Kept as its own function so the cull threshold can
+     be exercised directly from the debug harness rather than re-implemented in
+     a test — a re-implementation would only prove the test agrees with itself. */
+  function artExtentRel(ta, tb, tc, td, iw, ih, w, h) {
+    var ux = ta * iw, uy = tb * iw;     // image x-axis, projected
+    var vx = tc * ih, vy = td * ih;     // image y-axis, projected
+    var ext = Math.max(Math.hypot(ux + vx, uy + vy), Math.hypot(ux - vx, uy - vy));
+    return ext / Math.hypot(w, h);
+  }
+
   var _ax = [0, 0, 0], _ay = [0, 0, 0];
   /* Draw the art figures: project each figure's 3 anchor stars with the
      shared camera, solve the exact affine (image px -> screen px) from the
@@ -1489,6 +1506,55 @@ window.RE_attachTap = function (el, onTap) {
       var tb = (_ay[0] * (A1.y - A2.y) + _ay[1] * (A2.y - A0.y) + _ay[2] * (A0.y - A1.y)) / det;
       var td = (_ay[0] * (A2.x - A1.x) + _ay[1] * (A0.x - A2.x) + _ay[2] * (A1.x - A0.x)) / det;
       var tf = _ay[0] - tb * A0.x - td * A0.y;
+
+      /* H20 Part 2 — SCALE CULL. Skip a figure whose projected extent is absurd.
+         (Added 2026-08-25 from Alex's screenshots at az 353, alt -5 and -19.)
+
+         WHAT WENT WRONG. The position cull above (m = 420) asks only WHERE the
+         anchor triangle is, never HOW BIG the figure became. A far-off-axis
+         figure can keep an anchor on screen while the affine blows the bitmap
+         up to several times the viewport. The art is .jpg with NO ALPHA, so its
+         opaque near-black background is composited with "lighter" — additively.
+         Scaled that far, the artwork itself lands off-screen and all that
+         remains on screen is the background wash, bounded by the image
+         rectangle, which the affine turns into a large translucent
+         quadrilateral with hard straight edges. That is exactly what the
+         screenshots show, and it is why the shapes look like parallelograms:
+         they ARE the image rectangle.
+
+         WHY VIEWPORT-RELATIVE AND NOT AFFINE SCALE. The obvious metric is the
+         affine's own scale factor, and it is wrong: it maps IMAGE pixels to
+         SCREEN pixels, so it depends on both the asset and the display. The
+         assets are not one size — most are 512x512 but some are 256x256 — so
+         the same affine scale covers half as much screen for a 256 figure. And
+         a threshold tuned on a 430px-wide phone would drift on a tablet.
+         Measuring the projected extent against the viewport diagonal costs the
+         same arithmetic and travels correctly across both.
+
+         THE NUMBER, from 1413 samples over the whole sky at 430x930:
+
+           projected extent / viewport diagonal        p50     p90     max
+           figures whose centroid is ON screen        0.695   0.979   1.443
+           figures whose centroid is OFF screen       1.712   6.479  24.773
+
+           at Alex's angles: az 353 alt -19 -> Boo 8.42, Cas 6.65, Tau 4.50
+                             az 353 alt  -5 -> Tau 5.63, Boo 4.37
+
+         NO legitimate on-screen figure exceeded 1.443, Ursa Major included
+         (its own on-screen max IS the 1.443). 2.5 sits 73% above that and well
+         under every wedge in the screenshots. Culling, not clamping: a figure
+         drawn at several times the viewport is not a figure, it is a wash, and
+         not drawing it is the correct result rather than a degradation.
+
+         ⚠️ PROVISIONAL, same discipline as COMPASS_MAX_ALT_DEG. 1.443 is the
+         measured ceiling at ONE location, time and viewport. If Alex still sees
+         milder washes, the number to try is 2.0 — that would additionally catch
+         Per (2.36) and Cas (2.09), which survive 2.5 at alt -5. Lower it only
+         on evidence: a false positive here silently deletes correct artwork,
+         which is worse than the bug it fixes. */
+      var _iw = en.imgEl.naturalWidth || 0, _ih = en.imgEl.naturalHeight || 0;
+      if (_iw && _ih && artExtentRel(ta, tb, tc, td, _iw, _ih, w, h) > ART_MAX_EXTENT_REL) continue;
+
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
       ctx.globalAlpha = up === 0 ? ART_ALPHA_BELOW : ART_ALPHA;
@@ -1763,6 +1829,29 @@ window.RE_attachTap = function (el, onTap) {
     debugOriMatrix: function (a, b, g) { return oriMatrix(a, b, g); },
     debugLookVec: function (a, b, g) { return norm3(matMulVec(oriMatrix(a, b, g), [0, 0, -1])); },
     debugCompassMaxAlt: function () { return COMPASS_MAX_ALT_DEG; },
+    debugArtCull: function (con) {  // H20: exercise the SHIPPED cull, not a replica
+      if (!artDb || !artDb.ready) return null;
+      var cam = makeCamera(window.innerWidth, window.innerHeight); if (!cam) return null;
+      for (var i = 0; i < artDb.entries.length; i++) {
+        var en = artDb.entries[i]; if (en.con !== con) continue;
+        var e = artDb.enu, ok = true, a, o;
+        for (a = 0; a < 3; a++) { o = (i * 3 + a) * 3;
+          if (!projectVec(cam, e[o], e[o+1], e[o+2], _pt)) { ok = false; break; }
+          _ax[a] = _pt.x; _ay[a] = _pt.y; }
+        if (!ok) return { behind: true };
+        var A0 = en.anchors[0], A1 = en.anchors[1], A2 = en.anchors[2];
+        var det = A0.x*(A1.y-A2.y) + A1.x*(A2.y-A0.y) + A2.x*(A0.y-A1.y);
+        if (Math.abs(det) < 1e-6) return { degenerate: true };
+        var ta = (_ax[0]*(A1.y-A2.y) + _ax[1]*(A2.y-A0.y) + _ax[2]*(A0.y-A1.y)) / det;
+        var tc = (_ax[0]*(A2.x-A1.x) + _ax[1]*(A0.x-A2.x) + _ax[2]*(A1.x-A0.x)) / det;
+        var tb = (_ay[0]*(A1.y-A2.y) + _ay[1]*(A2.y-A0.y) + _ay[2]*(A0.y-A1.y)) / det;
+        var td = (_ay[0]*(A2.x-A1.x) + _ay[1]*(A0.x-A2.x) + _ay[2]*(A1.x-A0.x)) / det;
+        var iw = (en.imgEl && en.imgEl.naturalWidth) || 512, ih = (en.imgEl && en.imgEl.naturalHeight) || 512;
+        var rel = artExtentRel(ta, tb, tc, td, iw, ih, window.innerWidth, window.innerHeight);
+        return { rel: rel, threshold: ART_MAX_EXTENT_REL, culled: rel > ART_MAX_EXTENT_REL, iw: iw, ih: ih };
+      }
+      return null;
+    },
     debugCompassGates: function () { return { maxAlt: COMPASS_MAX_ALT_DEG, maxAcc: COMPASS_MAX_ACCURACY_DEG,
       stableSamples: COMPASS_STABLE_SAMPLES, stableSpread: COMPASS_STABLE_SPREAD_DEG }; },
     debugCamera: function () { return makeCamera(window.innerWidth, window.innerHeight); },
